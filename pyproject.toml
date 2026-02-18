@@ -1,0 +1,32 @@
+[project]
+name = "llassembly"
+version = "0.0.1"
+description = "Planner for llm tool calls"
+readme = "README.md"
+requires-python = ">=3.12"
+author = "Aleh Shydlouski"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["LLM", "tool calls", "assembly"]
+dependencies = [
+    "langchain>=1.2.7",
+    "langgraph>=1.0.8",
+    "pydantic>=2.12.4",
+]
+
+[dependency-groups]
+dev = [
+    "langchain-ollama>=1.0.1",
+    "ollama>=0.6.1",
+    "httpx>=0.28.1",
+    "black>=25.11.0",
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-recording>=0.13.4",
+    "ruff>=0.14.8",
+    "pydantic-settings>=2.12.0",
+    "mypy>=1.19.1",
+    "isort>=7.0.0",
+]
+
+
