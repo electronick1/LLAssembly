@@ -1,38 +1,90 @@
-Work in progres, you may face bugs and incorect behaviour
 
 ## About
 
-LLAsssembly introduces a different way to orchestrate tools usage in language model agents. Instead of relying on the LLM to directly call tools in a fixed sequence, it lets LLM generate assembly-like code that is then  initiates tools during emulation process. This approach allows for dynamic control flow, conditional logic, loops, and complex decision-making for the tool calls within a single agent call.
+LLAssembly is a tool-orchestration library for LLM agents.
 
+Rather than having the LLM invoke tools repeatedly in a fixed sequence, LLAssembly asks the model to write complete execution plan up-front that includes conditionals, loops, and state tracking in assembly-like program that then initiates tools during emulation process, enabling complex control flow within a single agent invocation.
+
+Below is an updated version of the diagram from the [official LangChain documentation](https://docs.langchain.com/oss/python/langchain/agents), extended with the LLAssembly execution plan:
+<details>
+<summary>Diagram (click to expand)</summary>
+	
+```mermaid  theme={null}
+%%{
+  init: {
+    "fontFamily": "monospace",
+    "flowchart": {
+      "curve": "curve"
+    },
+    "themeVariables": {"edgeLabelBackground": "transparent"}
+  }
+}%%
+graph TD
+  %% Outside the agent
+  QUERY([input])
+  LLM{model}
+  TOOL(tools)
+  ANSWER([output])
+
+  %% Main flows (no inline labels)
+  QUERY --> LLM
+  LLM --"action"--> TOOL
+  TOOL --"observation"--> LLM
+  TOOL --> A
+  F --> TOOL
+  LLM --"finish"--> ANSWER
+
+ subgraph LLAsembly tools plan
+  A([Start]) --> AA[Executes Tool #1]
+  AA --> B[What Tool #1 replied?]
+  B -- Answer #1 --> C[Executes Tool #2]
+  B -- Answer #2  --> D[Executes Tool #3]
+  C --> E[Repeat Tool #2?]
+  E -- Yes --> C
+  E -- No  --> F([End])
+  D --> F
+end
+
+  classDef blueHighlight fill:#0a1c25,stroke:#0a455f,color:#bae6fd;
+  classDef greenHighlight fill:#0b1e1a,stroke:#0c4c39,color:#9ce4c4;
+  class QUERY blueHighlight;
+  class ANSWER blueHighlight;
+```
+</details>
+
+⚠️ Work in progress! LLAssembly is under active development, some parts not tested well and could be unstable. Feedback and PRs are welcome. If you hit issues, please open a ticket.
 
 ## Use Cases
 
-The library was originally designed for in-game MPC unit control throught natural language commands. For example, command like `Go to 5,5 if you see enemy on the road attack him and run to 7,7` contains multiple actions such as condition ("if you see enemy ...") and a loop (enemy should be checked on each step to 5,5). Traditional approach, when request to LLM is made to select next action (tool call) on each step, would require hundreds requests per unit, plus delays in llm replay. With this approach you make only one request that generates a complete execution plan that can react on environment change, implement conditions and loops and track state between tool calls.
+Most tool-using agents work like following: call a tool, show the result to the model, ask the model what to do next, repeat. It’s easy to manage and great for a simple flows, but it gets expensive and slow as soon as the task turns into a long sequence of actions or when you need the agent to react quickly to changing conditions.
+
+LLAssembly was originally designed for in-game NPC unit control throught natural language commands. A command like:
+`Go to 5,5 if you see enemy on the road attack him and run to 7,7` is a sequence of actions with conditions ("if you see enemy ...") and repeated checks (“look for an enemy at each step”). A traditional “next tool call” approach often needs an LLM round trip at each step to decide what to do next, which can quickly balloon into hundreds of requests per unit and introduce latency. With LLAssembly, you make only one request that generates a complete execution plan to react on environment change, implement conditions, loops and track state between tool calls.
 
 This approach is particularly useful in scenarios where you need to reduce the number of requests to LLMs, and when context/environment between tool calls changes rapidly. For instance:
 
-- **Robotics**: When integrating with many events or sensors where decisions need to be made quickly
-- **Code Assistants**: When execution depends on complex context and state and number of LLM requests is what you are paying for
-- **Game AI**: When you want to control NPC unit behavior with a complex conditional logic and there is no time to wait for a next action from LLM
-- **Automated Workflows**: When you need to orchestrate multiple tools with branching logic
+- **Robotics**: When decisions depend on sensor input and must happen quickly, minimizing LLM round trips is crucial.
+- **Code Assistants**: When execution requires complex control-flow and number of LLM requests is what you are paying for
+- **Game AI**: When you want to control NPC depending on the rapidly changing environment and there is no time to wait for a next action from LLM
+- **Automated Workflows**: When you need to orchestrate multiple tools with a branching logic
 
 
 ## Why Assembly?
 
-If you want to call tools with conditional logic or in the loop you have several options nowaday:
-- The traditional approach when you call LLM to give you a "next tool to execute" - this may result in many LLM requests and additional delays to get reply from LLM. This is especially problematic when you need to make decisions based on rapidly changing environment.
-- Creating your own DSL (doman specific language) that will describe the logic for the tool calls - often leads to LLM instability, as LLMs tend to make things up due to the luck of context (training set) about this custom DSL
-- Write high-level code (e.g. Python, JS, Lua, ...) to make tool calls - this could be a more stable approach because LLMs are better at producing python code than Assembly. But it's quite unsafe and complicated to emulate high-level programming languages based on the user input. Assembly code (the light version of it) can be emulated in 200 lines of python code in a very strict environment which is easy to control.
+When you want tool orchestration with branching logic or loops, there are a few common approaches—each with tradeoffs:
+- The traditional approach when you ask the LLM for the next tool to run on every step - this may result in many LLM requests and additional delays to get reply from LLM.
+- Creating your own DSL (doman specific language) that will describe the logic for the tool calls - often leads to LLM hallucination, as it tends to make things up due to the luck of context (training set) about this custom DSL.
+- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at producing python code than Assembly. But it's quite unsafe and complicated to emulate high-level programming languages based on the user input. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment.
 
-That said, languages such as Assembly or SQL - is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling MPC unit commands.
+An Assembly or SQL instructions set is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling NPC unit commands.
 
 ## How It Works
 
 The system works by using a LangChain agent with a custom middleware or LangGraph nodes. When you invoke the agent, it:
-1. Takes your request and creates a special system prompt asking the LLM to write assembly code instead of direct tool calls
-2. The LLM generates assembly instructions that describe the desired behavior
-3. The assembly code is parsed and executed through a lightweight emulator, converting each Assembly instruction to LangGraph node
-4. The emulator handles the actual tool calls, maintaining state and supporting conditional logic
+1. Your request is wrapped in a system prompt that instructs the LLM to generate assembly-like instructions rather than directly calling tools.
+2. The LLM returns a sequence of instructions describing the intended behavior and control flow.
+3. The assembly code is parsed and executed through a lightweight emulator, converting each Assembly instruction to LangGraph nodes
+4. During execution, the emulator performs the actual tool calls, stores intermediate results, and evaluates branches/loops based on tool outputs and tracked state.
 5. The results are returned to the user, including all the intermediate tool responses
 
 ## Installation
@@ -51,7 +103,7 @@ uv pip install .
 
 ## Examples
 
-See more examples in `tests/use_cases`. Here's how you might use it to control a game unit:
+See more examples in `tests/use_cases`. Here's how you might use it to control a in-game NPC unit:
 
 Langchain example:
 ```python
@@ -73,7 +125,7 @@ agent = create_agent(
 
 result = agent.invoke({
     "messages": [
-        SystemMessage("Control in-game MPC unit based on the provided commands."),
+        SystemMessage("Control in-game NPC unit based on the provided commands."),
         HumanMessage("Go to 5,5 if you see enemy on the road attack him and run to 7,7"),
     ]
 })
@@ -90,7 +142,7 @@ agent_graph.add_edge("llm_tools_planner", END)
 agent = agent_graph.compile()
 result = agent.invoke({
     "messages": [
-        SystemMessage("Control in-game MPC unit based on the provided commands."),
+        SystemMessage("Control in-game NPC unit based on the provided commands."),
         HumanMessage("Go to 5,5 if you see enemy on the road attack him and run to 7,7"),
     ]
 })
@@ -163,12 +215,14 @@ end_program:
     RET                         ; Return from program
 ```
 
-Which then will be converted to LangGraph sub-graph where each ASM instruction is
+Which then will be converted to the LangGraph sub-graph where each ASM instruction is
 a separate node. Such sub-graph will be executed with a provided context/state
 and each "CALL" instruction will result in a tool call produce `ToolMessage`.
 
 LangGraph with `get_graph().draw_mermaid()`:
-
+<details>
+<summary>Diagram (click to expand)</summary>
+	
 ```mermaid
 ---
 config:
@@ -316,7 +370,32 @@ graph TD;
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
 ```
+</details>
 
 See more examples in `tests/use_cases`, as well as example of Assembly code produced
 for the tool calls in `cassettes` folder for each test module.
 
+## Implementation details:
+
+Assembly calls a tool by pushing its input arguments onto the stack, then popping the tool’s output back off the stack. If your tool returns multiple values, declare the tool-call function’s return type as a tuple[...] so the assembly can read each result value correctly.
+```python
+@tool
+def get_current_position(unit_id: int) -> tuple[int, int]:
+	return 5,5
+```
+This translates to assembly:
+```Assembly
+PUSH 1
+CALL get_current_position
+POP R1	; x coordinate
+POP R2	; y coordinate
+```
+
+The assembly emulator can store values of any type in its registers and stack, which makes it possible to write tool functions that return arbitrary objects. For Assembly, any non-integer value is coerced to a string (or to a JSON-formatted string where appropriate). When a value is stored as a string, comparison (CMP) and arithmetic instructions are not supported for that operand.
+```Assembly
+CALL get_unit
+POP R1		; a json string representing unit object from get_unit
+CMP R1 100	; Not possible, R1 is json string
+PUSH R1
+CALL heal_unit	; heal_unit will receive json string representing unit
+```
