@@ -17,8 +17,13 @@ class BaseToolsPlannerNode:
     assembly code provided by LLMs.
 
     Attributes:
-        model: Langchain model used for generating assembly code from tool specifications
-        tools: List of tools that can be invoked during plan execution
+    - `model`: Langchain model used for generating assembly code from tool specifications
+    - `tools`: List of tools that can be invoked during plan execution
+    - `max_instructions_to_exec`: The maximum number of assembly instructions to emulate
+    - `infer_tools_messages`: If True, includes messages generated during the assembly
+    emulation (e.g., intermediate tool responses) in the final model response.
+    - `prompt_path`: Path to a custom prompt file. If None, a default prompt is used.
+    The LLM must generate valid assembly code compatible with the internal emulator.
     """
 
     def __init__(
@@ -27,11 +32,13 @@ class BaseToolsPlannerNode:
         tools: list[LangChainBaseTool],
         max_instructions_to_exec: int = 1000,
         infer_tools_messages: bool = True,
+        prompt_path: str | None = None,
     ):
         self.model = model
         self.extern_calls = [ExternCall.from_langchain_tool(tool) for tool in tools]
         self.max_instructions_to_exec = max_instructions_to_exec
         self.infer_tools_messages = infer_tools_messages
+        self.prompt_path = prompt_path
 
     def _get_sub_graph_with_state(
         self, llm_response: AnyMessage
@@ -57,7 +64,11 @@ class BaseToolsPlannerNode:
             if isinstance(message, SystemMessage) and isinstance(message.content, str):
                 existing_sys_message = message.content
                 break
-        return prompts.get_asm_prompt(existing_sys_message or "", self.extern_calls)
+        return prompts.get_asm_prompt(
+            system_message=existing_sys_message or "",
+            extern_calls=self.extern_calls,
+            prompt_path=self.prompt_path,
+        )
 
     def filter_system_messages(self, messages: list[AnyMessage]) -> list[AnyMessage]:
         return [msg for msg in messages if not isinstance(msg, SystemMessage)]
@@ -66,7 +77,7 @@ class BaseToolsPlannerNode:
 class ToolsPlannerNode(BaseToolsPlannerNode):
     def __call__(self, state: MessagesState) -> dict[str, typing.Any]:
         """
-        Execute the planning process for the given state.
+        Executes the planning process for the given state.
 
         Processes the input messages, generates assembly code using the
         language model, executes the assembly code through an emulator, and returns
@@ -95,7 +106,7 @@ class ToolsPlannerNode(BaseToolsPlannerNode):
 class AToolsPlannerNode(BaseToolsPlannerNode):
     async def __call__(self, state: MessagesState) -> dict[str, typing.Any]:
         """
-        Execute the planning process for the given state in async mode.
+        Executes the planning process for the given state in async mode.
 
         Processes the input messages, generates assembly code using the
         language model, executes the assembly code through an emulator, and returns
