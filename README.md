@@ -56,8 +56,6 @@ end
 
 ## Use Cases
 
-Most tool-using agents work like following: call a tool, show the result to the model, ask the model what to do next, repeat. It’s easy to manage and great for a simple flows, but it gets expensive and slow as soon as the task turns into a long sequence of actions or when you need the agent to react quickly to changing conditions.
-
 LLAssembly was originally designed for in-game NPC unit control throught natural language commands. A command like:
 `Go to 5,5 if you see enemy on the road attack him and run to 7,7` is a sequence of actions with conditions ("if you see enemy ...") and repeated checks (“look for an enemy at each step”). A traditional “next tool call” approach often needs an LLM round trip at each step to decide what to do next, which can quickly balloon into hundreds of requests per unit and introduce latency. With LLAssembly, you make only one request that generates a complete execution plan to react on environment change, implement conditions, loops and track state between tool calls.
 
@@ -71,16 +69,16 @@ This approach is particularly useful in scenarios where you need to reduce the n
 
 ## Why Assembly?
 
-When you want tool orchestration with branching logic or loops, there are a few common approaches—each with tradeoffs:
+When you want tool orchestration with branching logic or loops, there are a few common approaches, each with tradeoffs:
 - The traditional approach when you ask the LLM for the next tool to run on every step - this may result in many LLM requests and additional delays to get reply from LLM.
 - Creating your own DSL (doman specific language) that will describe the logic for the tool calls - often leads to LLM hallucination, as it tends to make things up due to the luck of context (training set) about this custom DSL.
-- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at producing python code than Assembly. But it's quite unsafe and complicated to emulate high-level programming languages based on the user input. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment.
+- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at generating python code than Assembly. But it's quite unsafe and complicated to emulate high-level programming languages based on the user input. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment.
 
 An Assembly or SQL instructions set is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling NPC unit commands.
 
 ## How It Works
 
-The system works by using a LangChain agent with a custom middleware or LangGraph nodes. When you invoke the agent, it:
+The system works by using a LangChain agent with a custom middleware or LangGraph nodes. When you invoke the agent:
 1. Your request is wrapped in a system prompt that instructs the LLM to generate assembly-like instructions rather than directly calling tools.
 2. The LLM returns a sequence of instructions describing the intended behavior and control flow.
 3. The assembly code is parsed and executed through a lightweight emulator, converting each Assembly instruction to LangGraph nodes
