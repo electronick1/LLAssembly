@@ -12,7 +12,7 @@ from llassembly.langgraph_plan import PlannerState, build_graph_from_asm
 
 class ToolsPlannerMiddleware(AgentMiddleware):
     """
-    A middleware for LangChain agents that enables complex multi-step tool usage
+    A middleware for LangChain agents that enables complex multi-step tools usage
     by generating and executing assembly-like code.
 
     Instead of relying on the LLM to directly invoke tools in sequence, this middleware
@@ -22,8 +22,7 @@ class ToolsPlannerMiddleware(AgentMiddleware):
 
     The middleware replaces the original tool calls with a system prompt that guides
     the LLM to produce valid assembly code. This code is then transformed into a
-    LangGraph sub-graph, which executes the tool calls with support for branching,
-    looping, and state management.
+    LangGraph sub-graph, which executes the tool calls.
 
     Usage:
     ```
@@ -36,10 +35,10 @@ class ToolsPlannerMiddleware(AgentMiddleware):
 
     In this case:
     - The system message is injected into a prompt template.
-    - Tool calls (`make_one_step`, `get_current_position`) are replaced by assembly
-      code that will be emulated.
-    - The LLM generates assembly code that is interpreted by the emulator to
-      dynamically execute tool calls in a structured way.
+    - Tool calls directly provided to the agent replaced by assembly code that
+    will be emulated.
+    - Assembly code is interpreted by the emulator to dynamically execute
+    tool calls.
 
     Middleware configuration:
     - `infer_tools_messages` (bool): If True, includes messages generated
@@ -48,6 +47,8 @@ class ToolsPlannerMiddleware(AgentMiddleware):
     - `prompt_path` (str | None): Path to a custom prompt file. If None, a default
       prompt is used. The LLM must generate valid assembly code compatible with
       the internal emulator.
+    - `max_asm_instructions_to_exec` (int): The maximum number of Assembly
+    instructions to emulate.
     """
 
     def __init__(
@@ -105,28 +106,15 @@ class ToolsPlannerMiddleware(AgentMiddleware):
     ) -> ModelRequest:
         """
         Transforms the user request so that the LLM receives a *system prompt*
-        asking it to produce assembly instead of direct tool calls.
-
-        The prompt produced by `llassembly.prompts.get_asm_prompt` is a short
-        instruction that tells the LLM “write a program in our restricted
-        assembly language that uses the following external functions” and
-        includes the user’s original system message as context.
+        asking to produce assembly instead of direct tool calls.
 
         For example when agent invoked like this:
         ```
-        agent = create_agent(
-            model=model,
-            tools=[
-                make_one_step,
-                get_current_position,
-            ],
-            middleware=[ToolsPlannerMiddleware()],
-        )
         agent.invoke(
             {
                 "messages": [
                     SystemMessage(
-                        "Control in-game MPC unit based on the provided commands."
+                        "Control in-game NPC unit based on the provided commands."
                     ),
                     HumanMessage("Move to 5,5 then dance and go to 1,1"),
                 ],
@@ -134,8 +122,8 @@ class ToolsPlannerMiddleware(AgentMiddleware):
         )
         ```
         System message will be injected to `prompts_src/base.md` and tool calls
-        `make_one_step` and `get_current_position` will be replaced by assembly
-        code that invokes langchain tools directly during assembly emulation.
+        will be replaced by assembly code that invokes langchain tools directly
+        during assembly emulation.
         """
         current_system_msg_content = (
             request.system_message.text if request.system_message else ""
@@ -147,7 +135,6 @@ class ToolsPlannerMiddleware(AgentMiddleware):
                 prompt_path=self.prompt_path,
             )
         )
-        request = request.override(state=request.state)
         request = request.override(tools=[])
         request = request.override(system_message=system_message)
         return request
