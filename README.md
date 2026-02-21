@@ -57,7 +57,7 @@ end
 ## Use Cases
 
 LLAssembly was originally designed for in-game NPC unit control throught natural language commands. A command like:
-`Go to 5,5 if you see enemy on the road attack him and run to 7,7` is a sequence of actions with conditions ("if you see enemy ...") and repeated checks (“look for an enemy at each step”). A traditional “next tool call” approach often needs an LLM round trip at each step to decide what to do next, which can quickly balloon into hundreds of requests per unit and introduce latency. With LLAssembly, you make only one request that generates a complete execution plan to react on environment change, implement conditions, loops and track state between tool calls.
+`Go to 5,5 if you see enemy on the road attack him and run to 7,7` is a sequence of actions with conditions ("if you see enemy ...") and repeated checks (“look for an enemy at each step”). A traditional “get next tool to call” approach often needs an LLM round trips at each step to decide what to do next, which can quickly balloon into hundreds of requests per unit and introduce latency. With LLAssembly, you make only one request that generates a complete execution plan to react on environment change, implement conditions, loops and track state between tool calls.
 
 This approach is particularly useful in scenarios where you need to reduce the number of requests to LLMs, and when context/environment between tool calls changes rapidly. For instance:
 
@@ -70,39 +70,30 @@ This approach is particularly useful in scenarios where you need to reduce the n
 ## Why Assembly?
 
 When you want tool orchestration with branching logic or loops, there are a few common approaches, each with tradeoffs:
-- The traditional approach when you ask the LLM for the next tool to run on every step - this may result in many LLM requests and additional delays to get reply from LLM.
+- The traditional approach when you ask LLM for a next tool to run on every step results in many LLM requests and additional delays to get reply from LLM.
 - Creating your own DSL (doman specific language) that will describe the logic for the tool calls - often leads to LLM hallucination, as it tends to make things up due to the luck of context (training set) about this custom DSL.
 - Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at generating python code than Assembly. But it's quite unsafe and complicated to emulate high-level programming languages based on the user input. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment.
 
-An Assembly or SQL instructions set is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling NPC unit commands.
+The Assembly (also SQL) instructions set is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling NPC unit commands.
 
 ## How It Works
 
-The system works by using a LangChain agent with a custom middleware or LangGraph nodes. When you invoke the agent:
+Currently LLAssembly supports LangChain and LangGraph. When you invoke the agent:
 1. Your request is wrapped in a system prompt that instructs the LLM to generate assembly-like instructions rather than directly calling tools.
-2. The LLM returns a sequence of instructions describing the intended behavior and control flow.
-3. The assembly code is parsed and executed through a lightweight emulator, converting each Assembly instruction to LangGraph nodes
+2. The LLM returns a sequence of Assembly instructions describing the intended behavior and control flow.
+3. The assembly code is parsed and executed through a lightweight emulator, converting each Assembly instruction to the LangGraph nodes
 4. During execution, the emulator performs the actual tool calls, stores intermediate results, and evaluates branches/loops based on tool outputs and tracked state.
 5. The results are returned to the user, including all the intermediate tool responses
 
 ## Installation
 
-```
-uv add git+https://github.com/electronick1/LLAssembly.git
-```
-or
-```
-git clone git+https://github.com/electronick1/LLAssembly.git
-cd LLAssembly
-uv pip install .
-```
-
+WIP section.
 
 
 ## Examples
 
 For LangChain simple add `ToolsPlannerMiddleware()` to the middlewares, it will modify the system prompt to produce assembly instructions and start emulation proces that will invoke tools provided to the agent.
-For LangGraph add `ToolsPlannerNode(ollama_model, tools=[...])` to your graph, this node will build sub-graph with assembly instructions invoking tools during sub-graph execution.
+For LangGraph add `ToolsPlannerNode(ollama_model, tools=[...])` to your graph for sync requests and `AToolsPlannerNode(...)` for async, this node will build sub-graph with assembly instructions invoking tools during sub-graph execution.
 
 See more examples in `tests/use_cases`. Here's how you might use it to control a in-game NPC unit:
 
