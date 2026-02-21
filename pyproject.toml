@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Planner for llm tool calls"
 readme = "README.md"
 requires-python = ">=3.12"
-author = "Aleh Shydlouski"
+authors = [{ name = "Aleh Shydlouski", email = "oleg.ivye@gmail.com" }]
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["LLM", "tool calls", "assembly"]
