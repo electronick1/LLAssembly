@@ -29,4 +29,12 @@ dev = [
     "isort>=7.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/electronick1/LLAssembly"
+Repository = "https://github.com/electronick1/LLAssembly"
+
+[build-system]
+requires = ["hatchling>=1.28.0"]
+build-backend = "hatchling.build"
+
 
