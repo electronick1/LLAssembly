@@ -11,8 +11,10 @@ from pydantic_core import PydanticUndefined
 
 class ExternCall(pydantic.BaseModel):
     """
-    Wrapper around a LangChain ``StructuredTool`` or any other type of tools that
-    exposes its interface in a format that can be used by the ASM emulator.
+    Wrapper around a LangChain ``StructuredTool`` or any other type of tools.
+
+    Used to define prompt for a tool ("extern call" in Assembly terms) based
+    on the input/output types defined in the tool handler.
     """
 
     tool_handler: langchain_tools.BaseTool
@@ -28,6 +30,7 @@ class ExternCall(pydantic.BaseModel):
         cls,
         tool_handler: langchain_tools.BaseTool,
     ) -> Self:
+        # Parse input arguments based on the pydantic definition
         input_args: dict[str, pydantic.fields.FieldInfo] = {}
         tool_call_schema = tool_handler.tool_call_schema
         if isinstance(tool_call_schema, dict):
@@ -39,12 +42,15 @@ class ExternCall(pydantic.BaseModel):
                 continue
             input_args[arg_name] = arg_field
 
+        # Parse output arguments based return type of the tool handler.
         output_annotations: list[pydantic.fields.FieldInfo] = []
         if isinstance(
             tool_handler,
             (langchain_tools.StructuredTool, langchain_tools.Tool),
         ):
             return_type = tool_handler.func.__annotations__.get("return")
+            # tuple return type will be unpacked in Assembly language
+            # into multiple registers.
             if get_origin(return_type) is tuple:
                 for arg in get_args(return_type):
                     if arg is not None:
@@ -66,8 +72,9 @@ class ExternCall(pydantic.BaseModel):
 
     def get_input_arg_prompt(self, arg_name: str) -> str:
         """
-        Returns description of the single argument for the LLM prompt as a guidelines
-        how Assembly must call external function.
+        Returns LLM prompt definition for the single tool argument
+        as a guidelines for Assembly of what arguments to supply for
+        external function.
         """
         field = self.input_args.get(arg_name)
         if field is None:
@@ -135,14 +142,14 @@ class ExternCallContext(pydantic.BaseModel):
     """
     Context passed to the emulator when an external call is executed.
 
-    The context is created by `ExternCallContext.from_asm_stack_supplier`
-    and then consumed by the emulator after the LangChain tool has finished
-    executing.
+    External call context supposed to be built based on the Assembly
+    emulator stack values, and used to communicate back the result of
+    extern call execution by supplying result to the stack.
     """
 
     extern_call: ExternCall
-    call_kwargs: dict[str, Any]  # input args
-    infer_result_hook: Callable  # forward output, e.g. back to emulator
+    call_kwargs: dict[str, Any]
+    infer_result_hook: Callable[[Any], None]
 
     @classmethod
     def from_asm_stack_supplier(
@@ -254,13 +261,14 @@ class ASMEmulatorState:
 
 class ASMEmulator:
     """
-    Lightweight x86‑style assembly interpreter.
+    Lightweight x86‑style assembly emulator.
 
     It supports a small subset of instructions needed for the
     tools execution: data movement, arithmetic, comparisons,
     conditional jumps, procedure calls, and the special
     ``db`` directive.  External tools are invoked via a callback
-    mechanism that uses the :class:`ExternCallContext` infrastructure.
+    mechanism that uses the `ExternCallContext` to communicate
+    between emulator and LLM agent framework (e.g. LangChain).
 
     The emulator is intentionally simple and does **not** implement
     memory loads/stores or full 32‑bit arithmetic; it focuses on
@@ -333,10 +341,9 @@ class ASMEmulator:
 
         if instruction.command in self.instruction_map:
             instruction_handler = self.instruction_map.get(instruction.command)
-            if instruction_handler:
-                instruction_result = instruction_handler(*instruction.operands)
-                if isinstance(instruction_result, ExternCallContext):
-                    return instruction_result
+            instruction_result = instruction_handler(*instruction.operands)
+            if isinstance(instruction_result, ExternCallContext):
+                return instruction_result
         else:
             self._state.eip += 1
 
@@ -423,13 +430,11 @@ class ASMEmulator:
         self._set_flag_value(Flag.CARRY, False)
 
     def _get_operand_value(self, operand: Any) -> Any:
-        # TODO: consider to add direct memory handlers.
         if (result := self._get_register_value(operand)) is not None:
             return result
         return int(operand)
 
     def _set_operand_value(self, operand: str, value: int):
-        # TODO: consider to add direct memory hanlders.
         self._set_register_value(operand, value)
 
     def _db(self, key_name: str, value: str):
@@ -463,10 +468,8 @@ class ASMEmulator:
         dest_value = self._get_operand_value(dest)
         result = dest_value + src_value
 
-        # Set flags based on result
         self._set_flags(result)
         self._set_flag_value(Flag.CARRY, (dest_value + src_value) > 0xFFFFFFFF)
-        # Update destination
         self._set_operand_value(dest, result)
         self._state.eip += 1
 
@@ -475,10 +478,7 @@ class ASMEmulator:
         dest_value = self._get_operand_value(dest)
         result = dest_value - src_value
 
-        # Set flags based on result
         self._set_flags(result)
-
-        # Update destination
         self._set_operand_value(dest, result)
         self._state.eip += 1
 
@@ -495,7 +495,7 @@ class ASMEmulator:
     def _call(self, dest: str) -> ExternCallContext | None:
         # Jump to destination
         if dest in self._labels:
-            self._state.eip = self._labels[dest] - 1  # -1 because we increment at end
+            self._state.eip = self._labels[dest] - 1
             return None
 
         self._state.eip += 1
@@ -513,15 +513,14 @@ class ASMEmulator:
     def _jmp(self, dest: str):
         if dest in self._labels:
             self._state.eip = self._labels[dest]
-        else:
-            raise RuntimeError("Label address not found")
+        raise RuntimeError("Label address not found")
 
     def _je(self, dest: str):
         # Jump if equal instruction.
         if self._get_flag_value(Flag.ZERO):
             self._jmp(dest)
-        else:
-            self._state.eip += 1
+            return
+        self._state.eip += 1
 
     def _jne(self, dest: str):
         # Jump if not equal instruction.
