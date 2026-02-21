@@ -513,6 +513,7 @@ class ASMEmulator:
     def _jmp(self, dest: str):
         if dest in self._labels:
             self._state.eip = self._labels[dest]
+            return
         raise RuntimeError("Label address not found")
 
     def _je(self, dest: str):
