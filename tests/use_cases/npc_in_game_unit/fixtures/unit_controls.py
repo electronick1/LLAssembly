@@ -1,8 +1,6 @@
 import langchain
 import pydantic
 
-# Use it as a primitive to implement movement related commands.
-
 
 class UnitContext(pydantic.BaseModel):
     pos_x: int = 0
