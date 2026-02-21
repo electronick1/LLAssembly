@@ -95,7 +95,7 @@ class PlanEmulatorNode:
 
         if extern_call_ctx := state["plan_emulator"].execute_current_instruction():
             # Executed insruction is a tool call, prepare messages state to
-            # run a tool call.
+            # run a tool call on the next LangGraph execution step.
             tool_id = str(uuid.uuid4())
             tool_calls = [
                 {
@@ -123,6 +123,7 @@ def infer_tool_result_wrap(
 ):
     result = handler(request)
     if result.status == "error":
+        # TODO: consider to return result
         raise RuntimeError("Tool error")
     for message in request.state["messages"]:
         extern_call_ctx: ExternCallContext
@@ -134,8 +135,9 @@ def infer_tool_result_wrap(
         ):
             if isinstance(result.content, str):
                 extern_call_ctx.infer_result(json.loads(result.content))
-            else:
-                extern_call_ctx.infer_result(result.content)
+                break
+            extern_call_ctx.infer_result(result.content)
+            break
 
     return result
 
