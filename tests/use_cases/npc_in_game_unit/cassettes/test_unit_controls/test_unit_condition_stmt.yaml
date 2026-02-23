@@ -1,0 +1,206 @@
+interactions:
+- request:
+    body: '{"model":"gpt-oss:20b","stream":true,"options":{},"messages":[{"role":"system","content":"\nWrite
+      assembly code to represent human natural languge request strictly following\nrequirements
+      defined in each section.\n\nInput received:\nNatural language request to translate
+      into assembly code instructions.\n\nOutput:\nValid assembly code based on definitions
+      in [0. General context], [1.* Core requirements] and [2.* Assembly code guidelines].\n\n0.
+      General context\n\n\n1. Core requirements:\n1.1. Only instructions from `[2.1
+      Allowed assembly instructions]` section are allowed for assembly code.\n1.2.
+      All commands or actions must be performed by calling extern functions from the
+      [2.3.* Allowed extern call functions].\n1.3. Extern calling convention:\n    -
+      1.3.1. Push input arguments onto the stack in the order specified by the function
+      signature\n    - 1.3.2. CALL <extern_name>\n    - 1.3.3. Execute \"POP\" instruction
+      to get values from the stack only if function returns something.\n1.4. The extern
+      function executes \"POP\" instruction for input arguments by itself. Therefore,
+      after CALL,\ndo not POP input arguments.\n1.5. Returned values from extern call
+      will be pushed to the stack. Execute POP to retrieve the result for each value
+      into registers.\n1.6. Never do POP after the CALL If extern function returns
+      nothing.\n1.7. If values returned by a function not needed - execute POP anyway
+      to a trow-away register R0 to keep stack balanced.\n1.8. If command or action
+      does not have specific extern call equivalent - call sensible function from
+      [2.3.* Allowed extern call functions] to represent it.\n1.9. Conditional jumps
+      and loops can be used. Conditional jumps and loops must be implemented with
+      CMP + Conditional jumps to labels. CALL stmt is not allowed with labels.\n1.10.
+      If natural language commands gives vague or under specified instructions input
+      arguments - choose sensible defaults.\n1.11. Always use CALL instruction with
+      functions defined in [2.3.* Allowed extern call functions], never invent a new
+      function call, never use placeholder or dummy functions.\n1.12. Never write
+      comments expecting that something will be implemented. Comments should only
+      follow existing assembly instructions.\n1.13. Never do placeholders. Never do
+      simplified or demo implementations. Produce full and complete assembly code
+      based on defined constrains.\n1.14. To represent string data use `section .rodata`
+      and set it like `<string name> db \"...\", 0`. Push string or string json to
+      the stack by <string name> if required by extern call arguments.\n1.15. Strictly
+      follow extern call functions convention, definition and description from [2.3.*
+      Allowed extern call functions] section.\n1.16. Each assembly instruction must
+      have a comment. Never put comment without instruction.\n\n2. Assembly code guidelines:\n\n2.1.
+      Allowed assembly instructions:\n- MOV dst, src\n- PUSH src\n- POP dst\n- ADD
+      dst, src\n- SUB dst, src\n- CMP a, b\n- JMP label\n- JE label\n- JNE label\n-
+      JLT label\n- JLE label\n- JGT label\n- JGE label\n- CALL extern function from
+      2.3\n- RET\n- label: \n\n2.2 Registers:\nUse R0 as throw away register.\nUse
+      R1..R100 as general purpose registers.\n\n2.3. Allowed extern call functions:\n\n\n        -
+      2.3.0. Extern function `make_one_step`:\n        `make_one_step` Input arguments:
+      (towards_x, towards_y).\n        `make_one_step` Output: Returns nothing.\n        `make_one_step`
+      Description and purpose:    \n        ''''''\n        Do one step towards coordinates
+      (towards_x, towards_y).\nThis function changes current position by one cell
+      in the direction towards destination.\nAlways call this function in the loop
+      multiple times until (towards_x, towards_y) is reached.\n        ''''''\n        `make_one_step`
+      Call example:\n        ''''''\n        PUSH <towards_x>\t;towards_x. Argument
+      type: Integer.\nPUSH <towards_y>\t;towards_y. Argument type: Integer.\n        CALL
+      make_one_step\n\n        ''''''\n\n\n        - 2.3.1. Extern function `get_current_position`:\n        `get_current_position`
+      Input arguments: ().\n        `get_current_position` Output: Returns 2 values.\n        `get_current_position`
+      Description and purpose:    \n        ''''''\n        Returns current unit position
+      as x,y coordinates.\n        ''''''\n        `get_current_position` Call example:\n        ''''''\n\n        CALL
+      get_current_position\n        POP <register>\t; Sets return value 0 to <register>\nPOP
+      <register>\t; Sets return value 1 to <register>\n        ''''''\n\n\n- 2.3.2.
+      Extern function `pick_sword`:\n`pick_sword` Input arguments: ().\n`pick_sword`
+      Output: Returns nothing.\n`pick_sword` Description and purpose:    \n''''''\nUnit
+      picks a sword.\n''''''\n`pick_sword` Call example:\n''''''\n\nCALL pick_sword\n\n''''''\n\n\n-
+      2.3.3. Extern function `drop_sword`:\n`drop_sword` Input arguments: ().\n`drop_sword`
+      Output: Returns nothing.\n`drop_sword` Description and purpose:    \n''''''\nUnit
+      drops a sword.\n''''''\n`drop_sword` Call example:\n''''''\n\nCALL drop_sword\n\n''''''\n\n\n-
+      2.3.4. Extern function `has_sword`:\n`has_sword` Input arguments: ().\n`has_sword`
+      Output: Returns 1 values.\n`has_sword` Description and purpose:    \n''''''\nReturns
+      1 if unit has a sword in the hands.\n''''''\n`has_sword` Call example:\n''''''\n\nCALL
+      has_sword\nPOP <register>\t; Sets return value 0 to <register>\n''''''\n\n\n-
+      2.3.5. Extern function `get_enemies_around`:\n`get_enemies_around` Input arguments:
+      ().\n`get_enemies_around` Output: Returns 1 values.\n`get_enemies_around` Description
+      and purpose:    \n''''''\nReturn closes enemy id around the unit. Returns 0
+      if no enemies found.\n''''''\n`get_enemies_around` Call example:\n''''''\n\nCALL
+      get_enemies_around\nPOP <register>\t; Sets return value 0 to <register>\n''''''\n\n\n        -
+      2.3.6. Extern function `attack_enemy`:\n        `attack_enemy` Input arguments:
+      (enemy_id).\n        `attack_enemy` Output: Returns nothing.\n        `attack_enemy`
+      Description and purpose:    \n        ''''''\n        Attacks enemy with a specified
+      id. Sword in hands needed to\nattack enemy.\n        ''''''\n        `attack_enemy`
+      Call example:\n        ''''''\n        PUSH <enemy_id>\t;enemy_id. Argument
+      type: Integer.\n        CALL attack_enemy\n\n        ''''''\n\n"},{"role":"system","content":"Control
+      in-game MPC unit based on the provided commands."},{"role":"user","content":"Go
+      to 5,5 if you see enemy on the road attack him and run to 7,7"}],"tools":[]}'
+    headers: {}
+    method: POST
+    uri: ''
+  response:
+    body:
+      string: '{"model": "gpt-oss:20b", "created_at": "2026-02-17T23:20:51.951051294Z",
+        "message": {"role": "assistant", "content": "    CALL get_current_position          ;
+        Get starting position\n    POP R1                             ; R1 = current
+        x\n    POP R2                             ; R2 = current y\n\nmove_to_5_5:\n    MOV
+        R3, 5                          ; R3 = target x\n    MOV R4, 5                          ;
+        R4 = target y\n    CMP R1, R3                         ; Compare current x
+        with target x\n    JE check_y5                        ; If x equal, check
+        y\n    JNE not_at_target                  ; If x not equal, loop body\n\ncheck_y5:\n    CMP
+        R2, R4                         ; Compare current y with target y\n    JE reached_5_5                     ;
+        If y equal, reached target\n    JNE not_at_target                  ; If y
+        not equal, loop body\n\nnot_at_target:\n    CALL get_enemies_around            ;
+        Check for enemies\n    POP R5                             ; R5 = enemy id\n    CMP
+        R5, 0                          ; If no enemy\n    JE no_enemy                        ;
+        Skip attack\n\n    CALL has_sword                     ; Ensure we have a sword\n    POP
+        R6                             ; R6 = has_sword flag\n    CMP R6, 0                          ;
+        If no sword\n    JE pick_sword_call                 ; Pick one\n\n    JMP
+        attack                         ; Attack the enemy\n\npick_sword_call:\n    CALL
+        pick_sword                    ; Pick a sword\n    JMP attack                         ;
+        Attack the enemy\n\nattack:\n    PUSH R5                            ; Push
+        enemy id\n    CALL attack_enemy                  ; Attack the enemy\n\nno_enemy:\n    PUSH
+        5                             ; Push target x\n    PUSH 5                             ;
+        Push target y\n    CALL make_one_step                 ; Take one step towards
+        (5,5)\n\n    CALL get_current_position          ; Update current position\n    POP
+        R1                             ; R1 = new x\n    POP R2                             ;
+        R2 = new y\n    JMP move_to_5_5                    ; Continue loop\n\nreached_5_5:\n    CALL
+        get_current_position          ; Update position (should be at 5,5)\n    POP
+        R1                             ; R1 = current x\n    POP R2                             ;
+        R2 = current y\n\nmove_to_7_7:\n    MOV R3, 7                          ; R3
+        = target x\n    MOV R4, 7                          ; R4 = target y\n    CMP
+        R1, R3                         ; Compare current x with target x\n    JE check_y7                        ;
+        If x equal, check y\n    JNE not_at_target2                 ; If x not equal,
+        loop body\n\ncheck_y7:\n    CMP R2, R4                         ; Compare current
+        y with target y\n    JE reached_7_7                     ; If y equal, reached
+        target\n    JNE not_at_target2                 ; If y not equal, loop body\n\nnot_at_target2:\n    PUSH
+        7                             ; Push target x\n    PUSH 7                             ;
+        Push target y\n    CALL make_one_step                 ; Take one step towards
+        (7,7)\n\n    CALL get_current_position          ; Update current position\n    POP
+        R1                             ; R1 = new x\n    POP R2                             ;
+        R2 = new y\n    JMP move_to_7_7                    ; Continue loop\n\nreached_7_7:\n    RET                                ;
+        End program", "thinking": "We"}, "done": false}'
+    headers: {}
+    ollama_content:
+    - '    CALL get_current_position          ; Get starting position '
+    - '    POP R1                             ; R1 = current x '
+    - '    POP R2                             ; R2 = current y '
+    - ' '
+    - 'move_to_5_5: '
+    - '    MOV R3, 5                          ; R3 = target x '
+    - '    MOV R4, 5                          ; R4 = target y '
+    - '    CMP R1, R3                         ; Compare current x with target x '
+    - '    JE check_y5                        ; If x equal, check y '
+    - '    JNE not_at_target                  ; If x not equal, loop body '
+    - ' '
+    - 'check_y5: '
+    - '    CMP R2, R4                         ; Compare current y with target y '
+    - '    JE reached_5_5                     ; If y equal, reached target '
+    - '    JNE not_at_target                  ; If y not equal, loop body '
+    - ' '
+    - 'not_at_target: '
+    - '    CALL get_enemies_around            ; Check for enemies '
+    - '    POP R5                             ; R5 = enemy id '
+    - '    CMP R5, 0                          ; If no enemy '
+    - '    JE no_enemy                        ; Skip attack '
+    - ' '
+    - '    CALL has_sword                     ; Ensure we have a sword '
+    - '    POP R6                             ; R6 = has_sword flag '
+    - '    CMP R6, 0                          ; If no sword '
+    - '    JE pick_sword_call                 ; Pick one '
+    - ' '
+    - '    JMP attack                         ; Attack the enemy '
+    - ' '
+    - 'pick_sword_call: '
+    - '    CALL pick_sword                    ; Pick a sword '
+    - '    JMP attack                         ; Attack the enemy '
+    - ' '
+    - 'attack: '
+    - '    PUSH R5                            ; Push enemy id '
+    - '    CALL attack_enemy                  ; Attack the enemy '
+    - ' '
+    - 'no_enemy: '
+    - '    PUSH 5                             ; Push target x '
+    - '    PUSH 5                             ; Push target y '
+    - '    CALL make_one_step                 ; Take one step towards (5,5) '
+    - ' '
+    - '    CALL get_current_position          ; Update current position '
+    - '    POP R1                             ; R1 = new x '
+    - '    POP R2                             ; R2 = new y '
+    - '    JMP move_to_5_5                    ; Continue loop '
+    - ' '
+    - 'reached_5_5: '
+    - '    CALL get_current_position          ; Update position (should be at 5,5) '
+    - '    POP R1                             ; R1 = current x '
+    - '    POP R2                             ; R2 = current y '
+    - ' '
+    - 'move_to_7_7: '
+    - '    MOV R3, 7                          ; R3 = target x '
+    - '    MOV R4, 7                          ; R4 = target y '
+    - '    CMP R1, R3                         ; Compare current x with target x '
+    - '    JE check_y7                        ; If x equal, check y '
+    - '    JNE not_at_target2                 ; If x not equal, loop body '
+    - ' '
+    - 'check_y7: '
+    - '    CMP R2, R4                         ; Compare current y with target y '
+    - '    JE reached_7_7                     ; If y equal, reached target '
+    - '    JNE not_at_target2                 ; If y not equal, loop body '
+    - ' '
+    - 'not_at_target2: '
+    - '    PUSH 7                             ; Push target x '
+    - '    PUSH 7                             ; Push target y '
+    - '    CALL make_one_step                 ; Take one step towards (7,7) '
+    - ' '
+    - '    CALL get_current_position          ; Update current position '
+    - '    POP R1                             ; R1 = new x '
+    - '    POP R2                             ; R2 = new y '
+    - '    JMP move_to_7_7                    ; Continue loop '
+    - ' '
+    - 'reached_7_7: '
+    - '    RET                                ; End program '
+    status:
+      code: 200
+      message: OK
+version: 1

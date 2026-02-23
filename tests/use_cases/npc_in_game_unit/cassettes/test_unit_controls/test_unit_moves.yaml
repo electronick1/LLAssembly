@@ -1,0 +1,177 @@
+interactions:
+- request:
+    body: '{"model":"gpt-oss:20b","stream":true,"options":{},"messages":[{"role":"system","content":"\nWrite
+      assembly code to represent human natural languge request strictly following\nrequirements
+      defined in each section.\n\nInput received:\nNatural language request to translate
+      into assembly code instructions.\n\nOutput:\nValid assembly code based on definitions
+      in [0. General context], [1.* Core requirements] and [2.* Assembly code guidelines].\n\n0.
+      General context\n\n\n1. Core requirements:\n1.1. Only instructions from `[2.1
+      Allowed assembly instructions]` section are allowed for assembly code.\n1.2.
+      All commands or actions must be performed by calling extern functions from the
+      [2.3.* Allowed extern call functions].\n1.3. Extern calling convention:\n    -
+      1.3.1. Push input arguments onto the stack in the order specified by the function
+      signature\n    - 1.3.2. CALL <extern_name>\n    - 1.3.3. Execute \"POP\" instruction
+      to get values from the stack only if function returns something.\n1.4. The extern
+      function executes \"POP\" instruction for input arguments by itself. Therefore,
+      after CALL,\ndo not POP input arguments.\n1.5. Returned values from extern call
+      will be pushed to the stack. Execute POP to retrieve the result for each value
+      into registers.\n1.6. Never do POP after the CALL If extern function returns
+      nothing.\n1.7. If values returned by a function not needed - execute POP anyway
+      to a trow-away register R0 to keep stack balanced.\n1.8. If command or action
+      does not have specific extern call equivalent - call sensible function from
+      [2.3.* Allowed extern call functions] to represent it.\n1.9. Conditional jumps
+      and loops can be used. Conditional jumps and loops must be implemented with
+      CMP + Conditional jumps to labels. CALL stmt is not allowed with labels.\n1.10.
+      If natural language commands gives vague or under specified instructions input
+      arguments - choose sensible defaults.\n1.11. Always use CALL instruction with
+      functions defined in [2.3.* Allowed extern call functions], never invent a new
+      function call, never use placeholder or dummy functions.\n1.12. Never write
+      comments expecting that something will be implemented. Comments should only
+      follow existing assembly instructions.\n1.13. Never do placeholders. Never do
+      simplified or demo implementations. Produce full and complete assembly code
+      based on defined constrains.\n1.14. To represent string data use `section .rodata`
+      and set it like `<string name> db \"...\", 0`. Push string or string json to
+      the stack by <string name> if required by extern call arguments.\n1.15. Strictly
+      follow extern call functions convention, definition and description from [2.3.*
+      Allowed extern call functions] section.\n1.16. Each assembly instruction must
+      have a comment. Never put comment without instruction.\n\n2. Assembly code guidelines:\n\n2.1.
+      Allowed assembly instructions:\n- MOV dst, src\n- PUSH src\n- POP dst\n- ADD
+      dst, src\n- SUB dst, src\n- CMP a, b\n- JMP label\n- JE label\n- JNE label\n-
+      JLT label\n- JLE label\n- JGT label\n- JGE label\n- CALL extern function from
+      2.3\n- RET\n- label: \n\n2.2 Registers:\nUse R0 as throw away register.\nUse
+      R1..R100 as general purpose registers.\n\n2.3. Allowed extern call functions:\n\n\n        -
+      2.3.0. Extern function `make_one_step`:\n        `make_one_step` Input arguments:
+      (towards_x, towards_y).\n        `make_one_step` Output: Returns nothing.\n        `make_one_step`
+      Description and purpose:    \n        ''''''\n        Do one step towards coordinates
+      (towards_x, towards_y).\nThis function changes current position by one cell
+      in the direction towards destination.\nAlways call this function in the loop
+      multiple times until (towards_x, towards_y) is reached.\n        ''''''\n        `make_one_step`
+      Call example:\n        ''''''\n        PUSH <towards_x>\t;towards_x. Argument
+      type: Integer.\nPUSH <towards_y>\t;towards_y. Argument type: Integer.\n        CALL
+      make_one_step\n\n        ''''''\n\n\n        - 2.3.1. Extern function `get_current_position`:\n        `get_current_position`
+      Input arguments: ().\n        `get_current_position` Output: Returns 2 values.\n        `get_current_position`
+      Description and purpose:    \n        ''''''\n        Returns current unit position
+      as x,y coordinates.\n        ''''''\n        `get_current_position` Call example:\n        ''''''\n\n        CALL
+      get_current_position\n        POP <register>\t; Sets return value 0 to <register>\nPOP
+      <register>\t; Sets return value 1 to <register>\n        ''''''\n\n"},{"role":"system","content":"Control
+      in-game MPC unit based on the provided commands."},{"role":"user","content":"Move
+      to 5,5 then dance and go to 7,7"}],"tools":[]}'
+    headers: {}
+    method: POST
+    uri: ''
+  response:
+    body:
+      string: '{"model": "gpt-oss:20b", "created_at": "2026-02-17T23:20:07.209031109Z",
+        "message": {"role": "assistant", "content": "```\nsection .text\nglobal _start\n\n_start:\n    ;
+        ---------- Move to (5,5) ----------\n    MOV R5, 5          ; R5 = target_x
+        (first target)\n    MOV R6, 5          ; R6 = target_y (first target)\n    JMP
+        loop_to_5      ; jump to loop that moves to (5,5)\n\n; ---------- Loop that
+        moves until current position == (R5,R6) ----------\nloop_to_5:\n    CALL get_current_position          ;
+        get current position\n    POP R1                              ; current_x\n    POP
+        R2                              ; current_y\n    CMP R1, R5                          ;
+        compare current_x with target_x\n    JE compare_y_5                      ;
+        if equal, check y\n    PUSH R5                             ; push target_x\n    PUSH
+        R6                             ; push target_y\n    CALL make_one_step                  ;
+        move one step toward (R5,R6)\n    JMP loop_to_5                       ; repeat
+        loop\n\ncompare_y_5:\n    CMP R2, R6                          ; compare current_y
+        with target_y\n    JE after_reach_5                    ; if equal, reached
+        target\n    PUSH R5                             ; push target_x\n    PUSH
+        R6                             ; push target_y\n    CALL make_one_step                  ;
+        move one step toward (R5,R6)\n    JMP loop_to_5                       ; repeat
+        loop\n\nafter_reach_5:\n    ; ---------- Dance (no-op step at current position)
+        ----------\n    CALL get_current_position          ; get current position\n    POP
+        R3                              ; current_x (for dance)\n    POP R4                              ;
+        current_y (for dance)\n    PUSH R3                             ; push dance_x\n    PUSH
+        R4                             ; push dance_y\n    CALL make_one_step                  ;
+        perform \"dance\" by stepping to same position\n\n    ; ---------- Prepare
+        to move to (7,7) ----------\n    MOV R5, 7          ; R5 = target_x (second
+        target)\n    MOV R6, 7          ; R6 = target_y (second target)\n    JMP loop_to_7      ;
+        jump to loop that moves to (7,7)\n\n; ---------- Loop that moves until current
+        position == (R5,R6) ----------\nloop_to_7:\n    CALL get_current_position          ;
+        get current position\n    POP R1                              ; current_x\n    POP
+        R2                              ; current_y\n    CMP R1, R5                          ;
+        compare current_x with target_x\n    JE compare_y_7                      ;
+        if equal, check y\n    PUSH R5                             ; push target_x\n    PUSH
+        R6                             ; push target_y\n    CALL make_one_step                  ;
+        move one step toward (R5,R6)\n    JMP loop_to_7                       ; repeat
+        loop\n\ncompare_y_7:\n    CMP R2, R6                          ; compare current_y
+        with target_y\n    JE after_reach_7                    ; if equal, reached
+        target\n    PUSH R5                             ; push target_x\n    PUSH
+        R6                             ; push target_y\n    CALL make_one_step                  ;
+        move one step toward (R5,R6)\n    JMP loop_to_7                       ; repeat
+        loop\n\nafter_reach_7:\n    RET                                 ; finished
+        moving to (7,7)\n```", "thinking": "We"}, "done": false}'
+    headers: {}
+    ollama_content:
+    - '``` '
+    - 'section .text '
+    - 'global _start '
+    - ' '
+    - '_start: '
+    - '    ; ---------- Move to (5,5) ---------- '
+    - '    MOV R5, 5          ; R5 = target_x (first target) '
+    - '    MOV R6, 5          ; R6 = target_y (first target) '
+    - '    JMP loop_to_5      ; jump to loop that moves to (5,5) '
+    - ' '
+    - '; ---------- Loop that moves until current position == (R5,R6) ---------- '
+    - 'loop_to_5: '
+    - '    CALL get_current_position          ; get current position '
+    - '    POP R1                              ; current_x '
+    - '    POP R2                              ; current_y '
+    - '    CMP R1, R5                          ; compare current_x with target_x '
+    - '    JE compare_y_5                      ; if equal, check y '
+    - '    PUSH R5                             ; push target_x '
+    - '    PUSH R6                             ; push target_y '
+    - '    CALL make_one_step                  ; move one step toward (R5,R6) '
+    - '    JMP loop_to_5                       ; repeat loop '
+    - ' '
+    - 'compare_y_5: '
+    - '    CMP R2, R6                          ; compare current_y with target_y '
+    - '    JE after_reach_5                    ; if equal, reached target '
+    - '    PUSH R5                             ; push target_x '
+    - '    PUSH R6                             ; push target_y '
+    - '    CALL make_one_step                  ; move one step toward (R5,R6) '
+    - '    JMP loop_to_5                       ; repeat loop '
+    - ' '
+    - 'after_reach_5: '
+    - '    ; ---------- Dance (no-op step at current position) ---------- '
+    - '    CALL get_current_position          ; get current position '
+    - '    POP R3                              ; current_x (for dance) '
+    - '    POP R4                              ; current_y (for dance) '
+    - '    PUSH R3                             ; push dance_x '
+    - '    PUSH R4                             ; push dance_y '
+    - '    CALL make_one_step                  ; perform "dance" by stepping to same
+      position '
+    - ' '
+    - '    ; ---------- Prepare to move to (7,7) ---------- '
+    - '    MOV R5, 7          ; R5 = target_x (second target) '
+    - '    MOV R6, 7          ; R6 = target_y (second target) '
+    - '    JMP loop_to_7      ; jump to loop that moves to (7,7) '
+    - ' '
+    - '; ---------- Loop that moves until current position == (R5,R6) ---------- '
+    - 'loop_to_7: '
+    - '    CALL get_current_position          ; get current position '
+    - '    POP R1                              ; current_x '
+    - '    POP R2                              ; current_y '
+    - '    CMP R1, R5                          ; compare current_x with target_x '
+    - '    JE compare_y_7                      ; if equal, check y '
+    - '    PUSH R5                             ; push target_x '
+    - '    PUSH R6                             ; push target_y '
+    - '    CALL make_one_step                  ; move one step toward (R5,R6) '
+    - '    JMP loop_to_7                       ; repeat loop '
+    - ' '
+    - 'compare_y_7: '
+    - '    CMP R2, R6                          ; compare current_y with target_y '
+    - '    JE after_reach_7                    ; if equal, reached target '
+    - '    PUSH R5                             ; push target_x '
+    - '    PUSH R6                             ; push target_y '
+    - '    CALL make_one_step                  ; move one step toward (R5,R6) '
+    - '    JMP loop_to_7                       ; repeat loop '
+    - ' '
+    - 'after_reach_7: '
+    - '    RET                                 ; finished moving to (7,7) '
+    - '``` '
+    status:
+      code: 200
+      message: OK
+version: 1
