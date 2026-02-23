@@ -52,6 +52,11 @@ end
 ```
 </details>
 
+Currently following libs/frameworks supported:
+- LangChain
+- LangGraph
+- PydanticAI - WIP
+
 ⚠️ Work in progress! LLAssembly is under active development, some parts not tested well and could be unstable. Feedback and PRs are welcome. If you hit issues, please open a ticket.
 
 ## Use Cases
@@ -72,7 +77,7 @@ This approach is particularly useful in scenarios where you need to reduce the n
 When you want tool orchestration with branching logic or loops, there are a few common approaches, each with tradeoffs:
 - The traditional approach when you ask LLM for a next tool to run on every step results in many LLM requests and additional delays to get reply from LLM.
 - Creating your own DSL (doman specific language) that will describe the logic for the tool calls - often leads to LLM hallucination, as it tends to make things up due to the luck of context (training set) about this custom DSL.
-- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at generating python code than Assembly. But it's quite unsafe and complicated to emulate high-level programming languages based on the user input. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment.
+- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at generating python code than Assembly, for example like Claude ["Programmatic tool calling"](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling) does.  But it's quite unsafe and complicated to emulate high-level programming languages based on the user input, even in container. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment. 
 
 The Assembly (also SQL) instructions set is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling NPC unit commands.
 
@@ -87,8 +92,7 @@ Currently LLAssembly supports LangChain and LangGraph. When you invoke the agent
 
 ## Installation
 
-WIP section.
-
+`pip install llassembly`
 
 ## Examples
 
@@ -405,3 +409,6 @@ By default the `llassembly/prompts_md/base.md` prompt is used to generate assemb
 
 #### Async support
 Both LangChain and LangGraph implementations support async invocation of the agent. In case of Langchain the middleware will handle async by itself, in case of LangGraph use `AToolsPlannerNode` instead of `ToolsPlannerNode`
+
+#### LangChain `response_metadata`
+Tool execution context, such as input kwargs, included in `response_metadata` of the LangChain message, make sure to filter it if `response_metadata` used for some logging or any other custom workflow.
