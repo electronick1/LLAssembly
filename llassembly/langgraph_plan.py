@@ -57,12 +57,34 @@ def build_graph_from_asm(
             next_inst_name = END
 
         # Adds conditional jump to the label
-        if jmp_to := emulator.get_jmp_index(inst_i):
+        if jmp_to_index := emulator.get_jmp_index(inst_i):
+            jmp_to = _get_node_name(jmp_to_index)
+            if jmp_to_index >= len(emulator_instructions):
+                jmp_to = END
+
             graph.add_conditional_edges(
                 _get_node_name(inst_i),
                 ConditionalJMP(inst_i),
-                {True: _get_node_name(jmp_to), False: next_inst_name},
+                {True: jmp_to, False: next_inst_name},
             )
+
+        # Possible jumps to the subrutines and back (with RET)
+        elif call_jmp_indexes := emulator.get_call_jmp_index(inst_i):
+            call_jmp_names = set()
+            for jmp_index in call_jmp_indexes:
+                if jmp_index >= len(emulator_instructions):
+                    call_jmp_names.add(END)
+                    continue
+                call_jmp_names.add(_get_node_name(jmp_index))
+
+            if len(call_jmp_names) > 1:
+                graph.add_conditional_edges(
+                    _get_node_name(inst_i),
+                    CallJMP(inst_i),
+                    dict(zip(call_jmp_names, call_jmp_names)),
+                )
+            elif len(call_jmp_names) == 1:
+                graph.add_edge(inst_name, list(call_jmp_names)[0])
 
         # Adds tool call for asm "CALL" instruction
         elif tool_call := emulator.get_tool_call(inst_i):
@@ -104,6 +126,10 @@ class PlanEmulatorNode:
                     "args": extern_call_ctx.call_kwargs,
                 }
             ]
+
+            asm_instruction_str = ""
+            if asm_instruction := plan_emulator.get_instruction(self.instruction_index):
+                asm_instruction_str = str(asm_instruction.origin)
             state["messages"].append(
                 AIMessage(
                     "",
@@ -111,6 +137,7 @@ class PlanEmulatorNode:
                     response_metadata={
                         "extern_call_ctx": extern_call_ctx,
                         "extern_call_tool_id": tool_id,
+                        "asm_instruction": asm_instruction_str,
                     },
                 )
             )
@@ -133,10 +160,16 @@ def infer_tool_result_wrap(
             message.response_metadata.get("extern_call_tool_id")
             == request.tool_call["id"]
         ):
+
             if isinstance(result.content, str):
-                extern_call_ctx.infer_result(json.loads(result.content))
-                break
-            extern_call_ctx.infer_result(result.content)
+                try:
+                    infer_value = json.loads(result.content)
+                except json.JSONDecodeError:
+                    infer_value = result.content
+                extern_call_ctx.infer_result(infer_value)
+            else:
+                extern_call_ctx.infer_result(result.content)
+
             break
 
     return result
@@ -154,6 +187,17 @@ class ConditionalJMP:
         ):
             return True
         return False
+
+
+class CallJMP:
+    def __init__(self, instruction_index: int):
+        self.instruction_index = instruction_index
+
+    def __call__(self, state: PlannerState) -> str:
+        plan_emulator: ASMEmulator = state["plan_emulator"]
+        if plan_emulator.is_finished():
+            return END
+        return _get_node_name(plan_emulator.get_current_instruction_index())
 
 
 def _get_node_name(index: int) -> str:

@@ -1,4 +1,5 @@
 import json
+import logging
 import textwrap
 from enum import Enum
 from typing import Any, Callable, Self, get_args, get_origin
@@ -7,6 +8,9 @@ import pydantic
 from langchain.tools import ToolRuntime
 from langchain_core import tools as langchain_tools
 from pydantic_core import PydanticUndefined
+
+logger = logging.getLogger("llassembly_asm")
+logger.addHandler(logging.NullHandler())
 
 
 class ExternCall(pydantic.BaseModel):
@@ -93,6 +97,9 @@ class ExternCall(pydantic.BaseModel):
             arg_type = "String"
         elif field.annotation is int:
             arg_type = "Integer"
+        elif field.annotation and issubclass(field.annotation, pydantic.BaseModel):
+            # TODO: handle optional and nested types
+            arg_type = f"String in json format: `{json.dumps(field.annotation.model_json_schema())}`"
 
         arg_prompt = f"{arg_prompt}. Argument type: {arg_type}."
 
@@ -166,7 +173,9 @@ class ExternCallContext(pydantic.BaseModel):
         for arg_name, arg_field in reversed(extern_call.input_args.items()):
             arg_alias = arg_field.alias or arg_name
             kwargs[arg_alias] = arguments_supplier()
-            if arg_field.annotation not in (str, int):
+            if arg_field.annotation not in (str, int) and isinstance(
+                kwargs[arg_alias], str
+            ):
                 kwargs[arg_alias] = json.loads(f"[{kwargs[arg_alias]}]")[0]
 
         return cls(
@@ -188,24 +197,28 @@ class AsmInstruction(pydantic.BaseModel):
     Representation of a single assembly instruction.
     """
 
+    origin: str
     command: str
     operands: list[str]
 
     @classmethod
     def from_row_line(cls, line: str) -> Self | None:
+        origin = line
         line = line.strip().split(";")[0].strip()
 
         if not line:
             return None
 
         parts = line.split()
-        if len(parts) > 2 and parts[0].endswith(":") and parts[1] == "db":
-            return cls(command="db", operands=[parts[0], *parts[2:]])
+        if len(parts) > 2 and parts[1] == "db":
+            return cls(
+                origin=origin, command="db", operands=[parts[0], " ".join(parts[2:])]
+            )
 
         # remove `,` and handle cases like `move eax,ebcx`
-        parts = " ".join(parts).replace(",", " ").split()
+        parts = " ".join(parts).lower().replace(",", " ").split()
         operands = [op.strip() for op in parts[1:]]
-        return cls(command=parts[0].lower(), operands=operands)
+        return cls(origin=origin, command=parts[0], operands=operands)
 
 
 class Register(Enum):
@@ -254,6 +267,7 @@ class ASMEmulatorState:
         }
         self.eip: int = 0
         self.stack: list[Any] = []
+        self.call_stack: list[int] = []
         self.storage: dict[str, Any] = {}
         self.instruction_count: int = 0
         self.max_instructions_to_exec: int = max_instructions_to_exec
@@ -261,7 +275,14 @@ class ASMEmulatorState:
 
 class ASMEmulator:
     """
-    Lightweight x86‑style assembly emulator.
+    Lightweight emulator for assembly-like code.
+
+    Designed specifically for a prompt that used to generate tools
+    execution plan:
+    - Supports different types in registers, stack and storage
+    - Supports different types on CMP
+    - Has limited number of instructions
+    - Simplified specifications for operands
 
     It supports a small subset of instructions needed for the
     tools execution: data movement, arithmetic, comparisons,
@@ -269,11 +290,6 @@ class ASMEmulator:
     ``db`` directive.  External tools are invoked via a callback
     mechanism that uses the `ExternCallContext` to communicate
     between emulator and LLM agent framework (e.g. LangChain).
-
-    The emulator is intentionally simple and does **not** implement
-    memory loads/stores or full 32‑bit arithmetic; it focuses on
-    stack‑based execution so that it can be embedded inside a
-    natural‑language prompt.
     """
 
     def __init__(
@@ -296,8 +312,10 @@ class ASMEmulator:
             "je": self._je,
             "jne": self._jne,
             "jl": self._jl,
+            "jlt": self._jl,
             "jle": self._jle,
             "jg": self._jg,
+            "jgt": self._jg,
             "jge": self._jge,
             "js": self._js,
             "jns": self._jns,
@@ -308,7 +326,7 @@ class ASMEmulator:
     @classmethod
     def from_asm_code(cls, asm_code: str) -> Self:
         instructions = []
-        for line in asm_code.lower().strip().splitlines():
+        for line in asm_code.strip().splitlines():
             if instruction := AsmInstruction.from_row_line(line):
                 instructions.append(instruction)
 
@@ -316,6 +334,11 @@ class ASMEmulator:
 
     def get_instructions(self) -> list[AsmInstruction]:
         return self._instructions.copy()
+
+    def get_instruction(self, inst_index: int) -> AsmInstruction | None:
+        if inst_index < 0 or inst_index >= len(self._instructions):
+            return None
+        return self._instructions[inst_index].copy()
 
     def get_current_instruction_index(self) -> int:
         return self._state.eip
@@ -333,14 +356,14 @@ class ASMEmulator:
             raise RuntimeError("ASM stack pointer is less than 0")
 
         instruction = self._instructions[self._state.eip]
+        logger.debug("exec_instruction: %s", str(instruction.origin).strip())
 
         # Skip labels
         if instruction.command.endswith(":") and not instruction.operands:
             self._state.eip += 1
             return None
 
-        if instruction.command in self.instruction_map:
-            instruction_handler = self.instruction_map.get(instruction.command)
+        if instruction_handler := self.instruction_map.get(instruction.command):
             instruction_result = instruction_handler(*instruction.operands)
             if isinstance(instruction_result, ExternCallContext):
                 return instruction_result
@@ -350,6 +373,27 @@ class ASMEmulator:
         self._state.instruction_count += 1
         if self._state.instruction_count > self._state.max_instructions_to_exec:
             raise RuntimeError("Execution limit reached")
+
+        return None
+
+    def get_call_jmp_index(self, instruction_index: int) -> list[int] | None:
+        if instruction_index < 0 or instruction_index >= len(self._instructions):
+            return None
+
+        instruction = self._instructions[instruction_index]
+        if instruction.command == "ret":
+            label_call_indexes = self.get_instruction_indexes_when_label_called()
+            return [index + 1 for index in label_call_indexes] + [
+                len(self._instructions)
+            ]
+
+        if (
+            instruction.command == "call"
+            and instruction.operands
+            and instruction.operands[0] not in self._extern_calls
+            and instruction.operands[0] in self._labels
+        ):
+            return [self._labels[instruction.operands[0]]]
 
         return None
 
@@ -370,6 +414,8 @@ class ASMEmulator:
                 "jge",
                 "js",
                 "jns",
+                "jlt",
+                "jgt",
             }
             and instruction.operands
         ):
@@ -385,6 +431,17 @@ class ASMEmulator:
             return self._extern_calls.get(instruction.operands[0])
         return None
 
+    def get_instruction_indexes_when_label_called(self) -> list[int]:
+        indexes_when_label_called = []
+        for instruction_index, instruction in enumerate(self._instructions):
+            if (
+                instruction.command == "call"
+                and instruction.operands
+                and instruction.operands[0] in self._labels
+            ):
+                indexes_when_label_called.append(instruction_index)
+        return indexes_when_label_called
+
     def is_finished(self) -> bool:
         return self._state.eip >= len(self._instructions)
 
@@ -397,17 +454,21 @@ class ASMEmulator:
             max_instructions_to_exec=max_instructions_to_exec
         )
 
-    def _get_register_value(self, reg_name: str) -> int | None:
+    def _get_register_value(self, reg_name: str) -> Any:
         if reg_name.startswith("r"):
             # R0..R100 - are special registers added in the prompt message
             # to extend storage space and simplify ASM logic.
-            return self._state.storage[reg_name]
+            return self._state.storage.get(reg_name, 0)
         if reg_name not in Register:
             return None
         reg = Register(reg_name)
         return self._state.registers[reg]
 
-    def _set_register_value(self, reg_name: str, value: int):
+    def _set_register_value(self, reg_name: str, value: Any):
+        try:
+            value = try_convert_to_numbers(value)
+        except ValueError:
+            pass
         if reg_name.startswith("r"):
             # R0..R100 - are special registers added in the prompt message
             # to extend storage space and simplify ASM logic.
@@ -424,20 +485,75 @@ class ASMEmulator:
     def _set_flag_value(self, flag: Flag, value: bool):
         self._state.flags[flag] = value
 
-    def _set_flags(self, value: int):
-        self._set_flag_value(Flag.ZERO, value == 0)
-        self._set_flag_value(Flag.SIGN, value < 0)
-        self._set_flag_value(Flag.CARRY, False)
-
     def _get_operand_value(self, operand: Any) -> Any:
+        operand = operand.replace("[", "").replace("]", "")
         if (result := self._get_register_value(operand)) is not None:
             return result
-        return int(operand)
+        if (result := self._state.storage.get(operand)) is not None:
+            return result
+        try:
+            return try_convert_to_numbers(operand)
+        except ValueError:
+            raise RuntimeError(
+                "Can't find operand value in registers/storage or convert to int"
+            )
 
-    def _set_operand_value(self, operand: str, value: int):
+    def _set_operand_value(self, operand: str, value: Any):
         self._set_register_value(operand, value)
 
-    def _db(self, key_name: str, value: str):
+    def _db(self, key_name: str, values_str: str):
+        values_str = values_str.strip()
+        # By the prompt definition llm must use one string or json-string like format,
+        # but following parsing extends this rules by a bit to cover hallucinations.
+        comma_separated_values = values_str.split(",")
+        try:
+            if (
+                (comma_separated_values := values_str.split(","))
+                and try_convert_to_numbers(comma_separated_values[-1]) == 0
+                and len(comma_separated_values) > 1
+            ):
+                values_str = ",".join(comma_separated_values[:-1]).strip()
+        except ValueError:
+            pass
+
+        undefined = object()
+        value = undefined
+        try:
+            # Trying to convert `db` stmt as a list of values
+            value = json.loads(f"[{values_str.strip()}]")[0]
+        except json.JSONDecodeError:
+            pass
+        if value is undefined:
+            # Trying to convert `db` stmt as a list of values but considering
+            # that LLM may add additional quotes
+            try:
+                strip_quotes = values_str
+                while strip_quotes.startswith(('"', "'")) and strip_quotes.endswith(
+                    ('"', "'")
+                ):
+                    strip_quotes = strip_quotes[1:-1]
+                value = json.loads(f"[{strip_quotes}]")[0]
+            except json.JSONDecodeError:
+                pass
+        if isinstance(value, str):
+            # Try to parse nested json
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+        if value is undefined:
+            # Can't convert to json
+            strip_quotes = values_str
+            while strip_quotes.startswith(('"', "'")) and strip_quotes.endswith(
+                ('"', "'")
+            ):
+                strip_quotes = strip_quotes[1:-1]
+            value = strip_quotes
+        try:
+            # Try to convert to numbers by default
+            value = try_convert_to_numbers(value)
+        except ValueError:
+            pass
         self._state.storage[key_name] = value
         self._state.eip += 1
 
@@ -446,7 +562,7 @@ class ASMEmulator:
         self._set_operand_value(dest, src_value)
         self._state.eip += 1
 
-    def _push(self, operand: str):
+    def _push(self, operand: Any):
         value = self._get_operand_value(operand)
         self._state.stack.append(value)
         if esp_value := self._get_register_value("esp"):
@@ -466,26 +582,49 @@ class ASMEmulator:
     def _add(self, dest: str, src: str):
         src_value = self._get_operand_value(src)
         dest_value = self._get_operand_value(dest)
+        try:
+            src_value = try_convert_to_numbers(src_value)
+            dest_value = try_convert_to_numbers(dest_value)
+        except ValueError:
+            raise RuntimeError("Can't apply ADD command for none int/float operands")
+
         result = dest_value + src_value
 
-        self._set_flags(result)
-        self._set_flag_value(Flag.CARRY, (dest_value + src_value) > 0xFFFFFFFF)
+        self._set_flag_value(Flag.ZERO, result == 0)
+        self._set_flag_value(Flag.SIGN, result < 0)
+        self._set_flag_value(Flag.CARRY, False)
         self._set_operand_value(dest, result)
         self._state.eip += 1
 
     def _sub(self, dest: str, src: str):
         src_value = self._get_operand_value(src)
         dest_value = self._get_operand_value(dest)
+        try:
+            src_value = try_convert_to_numbers(src_value)
+            dest_value = try_convert_to_numbers(dest_value)
+        except ValueError:
+            raise RuntimeError("Can't apply SUB command for none int/float operands")
         result = dest_value - src_value
 
-        self._set_flags(result)
+        self._set_flag_value(Flag.ZERO, result == 0)
+        self._set_flag_value(Flag.SIGN, result < 0)
+        self._set_flag_value(Flag.CARRY, result < 0)
         self._set_operand_value(dest, result)
         self._state.eip += 1
 
     def _cmp(self, src1: str, src2: str):
         src1_value = self._get_operand_value(src1)
         src2_value = self._get_operand_value(src2)
-        result = src1_value - src2_value
+        try:
+            src1_value = try_convert_to_numbers(src1_value)
+            src2_value = try_convert_to_numbers(src2_value)
+            result = src1_value - src2_value
+        except ValueError:
+            self._set_flag_value(Flag.ZERO, src1_value == src2_value)
+            self._set_flag_value(Flag.SIGN, src1_value < src2_value)
+            self._set_flag_value(Flag.CARRY, src1_value < src2_value)
+            self._state.eip += 1
+            return
 
         self._set_flag_value(Flag.ZERO, result == 0)
         self._set_flag_value(Flag.SIGN, result < 0)
@@ -494,10 +633,6 @@ class ASMEmulator:
 
     def _call(self, dest: str) -> ExternCallContext | None:
         # Jump to destination
-        if dest in self._labels:
-            self._state.eip = self._labels[dest] - 1
-            return None
-
         self._state.eip += 1
         if extern_call := self._extern_calls.get(dest):
             return ExternCallContext.from_asm_stack_supplier(
@@ -505,10 +640,18 @@ class ASMEmulator:
                 arguments_supplier=self._pop_to_extern_call,
                 infer_result_hook=self._push_from_extern_call,
             )
+
+        if dest in self._labels:
+            self._state.call_stack.append(self._state.eip)
+            self._state.eip = self._labels[dest]
+
         return None
 
     def _ret(self):
-        self._state.eip += 1
+        if self._state.call_stack:
+            self._state.eip = self._state.call_stack.pop()
+            return
+        self._state.eip = len(self._instructions)
 
     def _jmp(self, dest: str):
         if dest in self._labels:
@@ -586,3 +729,29 @@ class ASMEmulator:
 
     def _push_from_extern_call(self, value: Any):
         self._state.stack.append(value)
+
+
+def try_convert_to_numbers(operand: Any) -> float | int:
+    if isinstance(operand, (int, float)):
+        return operand
+
+    operand = str(operand).lower()
+    if operand in ("nan", "+nan", "-nan"):
+        return float("nan")
+    if operand in ("inf", "+inf", "infinity", "+infinity"):
+        return float("inf")
+    if operand in ("-inf", "-infinity"):
+        return float("-inf")
+
+    if operand.endswith("h"):
+        return int(operand[:-1], 16)
+    if operand.endswith(("o", "q")):
+        return int(operand[:-1], 8)
+    if operand.endswith("b") or operand.startswith("0b"):
+        return int(operand[:-1], 2)
+
+    try:
+        return int(operand, 0)
+    except ValueError:
+        pass
+    return float(operand)

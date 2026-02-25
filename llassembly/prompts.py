@@ -2,7 +2,7 @@ import os
 
 from llassembly.asm_emulator import ExternCall
 
-MODULE_PATH = os.path.dirname(__file__)
+MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_PATH = os.path.join(MODULE_PATH, "prompts_md")
 
 

@@ -34,7 +34,7 @@ graph TD
   F --> TOOL
   LLM --"finish"--> ANSWER
 
- subgraph LLAsembly tools plan
+ subgraph LLAssembly tools plan
   A([Start]) --> AA[Executes Tool #1]
   AA --> B[What Tool #1 replied?]
   B -- Answer #1 --> C[Executes Tool #2]
@@ -77,7 +77,7 @@ This approach is particularly useful in scenarios where you need to reduce the n
 When you want tool orchestration with branching logic or loops, there are a few common approaches, each with tradeoffs:
 - The traditional approach when you ask LLM for a next tool to run on every step results in many LLM requests and additional delays to get reply from LLM.
 - Creating your own DSL (doman specific language) that will describe the logic for the tool calls - often leads to LLM hallucination, as it tends to make things up due to the luck of context (training set) about this custom DSL.
-- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at generating python code than Assembly, for example like Claude ["Programmatic tool calling"](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling) does.  But it's quite unsafe and complicated to emulate high-level programming languages based on the user input, even in container. Assembly code (the light version of it) can be emulated in 300 lines of python code in a very strict and easy to control environment. 
+- Asking the model for a high-level language code (e.g. Python, JS, Lua, ...) for execution plan to invoke tool calls - this could be a more stable approach because LLMs are better at generating python code than Assembly, for example like Claude ["Programmatic tool calling"](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling) does. But it's like running a random code from the internet on your PC - could be unsafe and complicated to make it right, even in containers. High-level language emulation is also hard. Simplified assembly-like code, on the other hand, can be emulated in 300 lines of python code in a very strict and easy to control environment.
 
 The Assembly (also SQL) instructions set is a middle ground between custom DSL and high-level programming code - it can be emulated in a strict environment (in fact it's converted to a LangGraph sub-graph) and most LLMs have more than enough context about Assembly to handle tool calls, for example `gpt-oss:20b` that fits in 16G GPU getting things done in handling NPC unit commands.
 
@@ -94,12 +94,56 @@ Currently LLAssembly supports LangChain and LangGraph. When you invoke the agent
 
 `pip install llassembly`
 
-## Examples
+## Get started
 
 For LangChain simple add `ToolsPlannerMiddleware()` to the middlewares, it will modify the system prompt to produce assembly instructions and start emulation proces that will invoke tools provided to the agent.
 For LangGraph add `ToolsPlannerNode(ollama_model, tools=[...])` to your graph for sync requests and `AToolsPlannerNode(...)` for async, this node will build sub-graph with assembly instructions invoking tools during sub-graph execution.
 
-See more examples in `tests/use_cases`. Here's how you might use it to control a in-game NPC unit:
+```
+import random
+from langchain.agents import create_agent
+from langchain.tools import tool
+from langchain_ollama import ChatOllama
+from langchain.messages import HumanMessage
+
+from llassembly.langchain import ToolsPlannerMiddleware
+
+
+@tool
+def get_weather(city: str) -> int:
+    """
+    Returns weather in celsius for a city.
+    """
+    if city.lower() == "paris":
+        return -10
+    return random.randint(0, 20)
+
+
+if __name__ == "__main__":
+    ollama_model = ChatOllama(
+        base_url="",            # URL to ollama model
+        model="gpt-oss:20b",    
+    )
+    agent = create_agent(
+        model=ollama_model,     # Ollama or any other model
+        tools=[get_weather],
+        middleware=[ToolsPlannerMiddleware()],
+    )
+    # Ask LLM to check weather based on condition and list
+    # of cities, in one call to LLM agent.
+    result = agent.invoke(
+        {"messages": [HumanMessage("""
+    Check weather in Paris and if lower than 0 
+    check weather in 10 other European cities
+        """)]},
+    )
+    print(result["messages"])
+```
+
+
+## Examples
+
+Here one of the example from `tests/use_cases` demonstrating complex tool handling with control-flow for in-game NPC unit:
 
 Langchain example:
 ```python
@@ -411,4 +455,11 @@ By default the `llassembly/prompts_md/base.md` prompt is used to generate assemb
 Both LangChain and LangGraph implementations support async invocation of the agent. In case of Langchain the middleware will handle async by itself, in case of LangGraph use `AToolsPlannerNode` instead of `ToolsPlannerNode`
 
 #### LangChain `response_metadata`
-Tool execution context, such as input kwargs, included in `response_metadata` of the LangChain message, make sure to filter it if `response_metadata` used for some logging or any other custom workflow.
+Tool execution context, such as input kwargs and asm instruction, included in `response_metadata` of the LangChain message, make sure to filter it if `response_metadata` used for some logging or any other custom workflow.
+
+#### To log executed ASM instructions
+```
+logger = logging.getLogger("llassembly_asm")
+logger.addHandler(logging.StreamHandler())  # Or your own handler
+logger.setLevel(logging.DEBUG)
+```
