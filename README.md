@@ -129,7 +129,7 @@ if __name__ == "__main__":
         tools=[get_weather],
         middleware=[ToolsPlannerMiddleware()],
     )
-    # Ask LLM to check weather by condition stmt and multiple
+    # Ask LLM to check weather by conditional stmt and multiple
     # cities, in one request to LLM agent.
     result = agent.invoke(
         {"messages": [HumanMessage("""
