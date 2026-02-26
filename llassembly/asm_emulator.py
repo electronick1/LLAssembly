@@ -505,7 +505,6 @@ class ASMEmulator:
         values_str = values_str.strip()
         # By the prompt definition llm must use one string or json-string like format,
         # but following parsing extends this rules by a bit to cover hallucinations.
-        comma_separated_values = values_str.split(",")
         try:
             if (
                 (comma_separated_values := values_str.split(","))
