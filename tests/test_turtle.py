@@ -1,5 +1,3 @@
-from turtle import TNavigator
-
 import pytest
 from langchain.agents import create_agent
 from langchain.messages import HumanMessage, SystemMessage
@@ -99,6 +97,8 @@ def test_condition_stmt_when_drawing(ollama_test_model, patched_turtle):
 
 @pytest.fixture
 def patched_turtle(monkeypatch):
+    from turtle import TNavigator
+
     positions_visited = []
 
     def position_getter(self):
