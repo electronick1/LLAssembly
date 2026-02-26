@@ -29,7 +29,7 @@ do not POP input arguments.
 1.11. Always use CALL instruction with functions defined in [2.3.* Allowed extern call functions], never invent a new function call, never use placeholder or dummy functions.
 1.12. Never write comments expecting that something will be implemented. Comments should only follow existing assembly instructions.
 1.13. Never do placeholders. Never do simplified or demo implementations. Produce full and complete assembly code based on defined constrains.
-1.14. To represent string data use `section .rodata` and set it like `<string name> db "...", 0`. Push string or string json to the stack by <string name> if required by extern call arguments.
+1.14. To represent string data use `section .rodata` defined in the beginning and set value in the format: `<db_label> db "<string>"`. The `<string>` can be define in json format. Always define one string value for db statement. Push string or string json to the stack by <db_label> if required by extern call arguments.
 1.15. Strictly follow extern call functions convention, definition and description from [2.3.* Allowed extern call functions] section.
 1.16. Each assembly instruction must have a comment. Never put comment without instruction.
 
@@ -51,7 +51,7 @@ do not POP input arguments.
 - JGE label
 - CALL extern function from 2.3
 - RET
-- label: 
+- label:
 
 2.2 Registers:
 Use R0 as throw away register.
