@@ -99,7 +99,7 @@ Currently LLAssembly supports LangChain and LangGraph. When you invoke the agent
 For LangChain simple add `ToolsPlannerMiddleware()` to the middlewares, it will modify the system prompt to produce assembly instructions and start emulation proces that will invoke tools provided to the agent.
 For LangGraph add `ToolsPlannerNode(ollama_model, tools=[...])` to your graph for sync requests and `AToolsPlannerNode(...)` for async, this node will build sub-graph with assembly instructions invoking tools during sub-graph execution.
 
-```
+```python
 import random
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -129,8 +129,8 @@ if __name__ == "__main__":
         tools=[get_weather],
         middleware=[ToolsPlannerMiddleware()],
     )
-    # Ask LLM to check weather based on condition and list
-    # of cities, in one call to LLM agent.
+    # Ask LLM to check weather by conditional stmt and multiple
+    # cities, in one request to LLM agent.
     result = agent.invoke(
         {"messages": [HumanMessage("""
     Check weather in Paris and if lower than 0 
