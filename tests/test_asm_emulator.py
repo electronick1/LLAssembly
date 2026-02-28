@@ -1,4 +1,5 @@
 import json
+from typing import Annotated
 
 import pydantic
 import pytest
@@ -12,6 +13,59 @@ from llassembly.asm_emulator import (
     Flag,
     Register,
 )
+
+
+def test_arbitrary_func_call():
+    def sample_tool_func(arg1: int, arg2: int) -> str:
+        """doc string"""
+        assert arg1 == 1
+        assert arg2 == 2
+        return "result"
+
+    asm_code = """
+    push 1
+    push 2
+    call sample_tool_func
+    pop R1
+    """
+
+    tools_called = []
+    emulator = ASMEmulator.from_asm_code(asm_code)
+    emulator.add_extern_call(ExternCall.from_callable(sample_tool_func))
+    for tool_ctx in emulator.iter_tool_calls():
+        tool_ctx.call_tool_handler()
+        tools_called.append(tool_ctx)
+
+    assert len(tools_called) == 1
+    assert tools_called[0].extern_call.tool_handler is sample_tool_func
+
+
+def test_arbitrary_func_annotated():
+    def sample_tool_func(
+        arg1: Annotated[str, pydantic.Field()],
+        arg2: Annotated[int, pydantic.Field(default=0)],
+    ) -> str:
+        """doc string"""
+        assert arg1 == 1
+        assert arg2 == 2
+        return "result"
+
+    asm_code = """
+    push 1
+    push 2
+    call sample_tool_func
+    pop R1
+    """
+    tools_called = []
+
+    emulator = ASMEmulator.from_asm_code(asm_code)
+    emulator.add_extern_call(ExternCall.from_callable(sample_tool_func))
+    for tool_ctx in emulator.iter_tool_calls():
+        tool_ctx.call_tool_handler()
+        tools_called.append(tool_ctx)
+
+    assert len(tools_called) == 1
+    assert tools_called[0].extern_call.tool_handler is sample_tool_func
 
 
 def test_extern_call_from_langchain_tool():
