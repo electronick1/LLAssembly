@@ -56,6 +56,7 @@ Currently following libs/frameworks supported:
 - LangChain
 - LangGraph
 - PydanticAI - WIP
+- Any other Agent tool
 
 ⚠️ Work in progress! LLAssembly is under active development, some parts not tested well and could be unstable. Feedback and PRs are welcome. If you hit issues, please open a ticket.
 
@@ -416,6 +417,57 @@ See more examples in `tests/use_cases`, as well as example of Assembly code prod
 for the tool calls in `cassettes` folder for each test module.
 
 ## Implementation details:
+
+#### Calling Asm emulator directly from any agent tool
+
+You can init asm emulator from any agent by replacing system message manually and
+providing the list of tools you want to call as python Callables.
+
+Here ollama example:
+
+```python
+import ollama
+from llassembly import ASMEmulator, ExternCall
+from llassembly import get_asm_prompt
+
+ollama_client = ollama.Client(host="")
+
+
+def do_sum(a: int, b: int) -> int:
+    """
+    Returns sum of a+b
+    """
+    return a + b
+
+
+def llm_request():
+    # Your tools as assembly "extern calls" 
+    extern_calls = [ExternCall.from_callable(do_sum)]
+
+    resp = ollama_client.chat(
+        messages=[
+            # Add system prompt that generates assembly
+            {"role": "system", "content": get_asm_prompt("", extern_calls)},
+            {"role": "user", "content": "Do 5+5"},
+        ],
+        model="gpt-oss:20b",
+        stream=False,
+        think=False,
+    )
+
+    # Init asm emulator with tools you want to call
+    emulator = ASMEmulator.from_asm_code(resp.message.content)
+    emulator.add_extern_calls(extern_calls)
+
+    # Iterate tool calls during emulation
+    for tool_ctx in emulator.iter_tool_calls():
+        print(tool_ctx.call_tool_handler())  # Prints 10
+
+
+llm_request()
+
+```
+
 
 #### Tool invocation from Assembly
 Assembly calls a tool by pushing its input arguments onto the stack, then popping the tool’s output back off the stack. If your tool returns multiple values, declare the tool-call function’s return type as a tuple[...] so the assembly can read each result value correctly.

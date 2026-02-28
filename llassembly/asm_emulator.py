@@ -2,7 +2,7 @@ import json
 import logging
 import textwrap
 from enum import Enum
-from typing import Any, Callable, Self, get_args, get_origin
+from typing import Any, Callable, Generator, Self, get_args, get_origin
 
 import pydantic
 from langchain.tools import ToolRuntime
@@ -73,6 +73,12 @@ class ExternCall(pydantic.BaseModel):
             input_args=input_args,
             output_annotations=output_annotations,
         )
+
+    @classmethod
+    def from_callable(cls, func: Callable) -> Self:
+        extern_call = cls.from_langchain_tool(langchain_tools.tool(func))
+        extern_call.tool_handler = func
+        return extern_call
 
     def get_input_arg_prompt(self, arg_name: str) -> str:
         """
@@ -190,6 +196,11 @@ class ExternCallContext(pydantic.BaseModel):
                 self.infer_result_hook(item)
         else:
             self.infer_result_hook(result)
+
+    def call_tool_handler(self) -> Any:
+        result = self.extern_call.tool_handler(**self.call_kwargs)
+        self.infer_result(result)
+        return result
 
 
 class AsmInstruction(pydantic.BaseModel):
@@ -349,6 +360,10 @@ class ASMEmulator:
     def add_extern_call(self, extern_call: ExternCall) -> None:
         self._extern_calls[extern_call.name] = extern_call
 
+    def add_extern_calls(self, extern_calls: list[ExternCall]) -> None:
+        for extern_call in extern_calls:
+            self.add_extern_call(extern_call)
+
     def execute_current_instruction(self) -> ExternCallContext | None:
         if self.is_finished():
             raise RuntimeError("ASM emulator finished execution")
@@ -375,6 +390,12 @@ class ASMEmulator:
             raise RuntimeError("Execution limit reached")
 
         return None
+
+    def iter_tool_calls(self) -> Generator[ExternCallContext, None, None]:
+        while not self.is_finished():
+            instruction_result = self.execute_current_instruction()
+            if isinstance(instruction_result, ExternCallContext):
+                yield instruction_result
 
     def get_call_jmp_index(self, instruction_index: int) -> list[int] | None:
         if instruction_index < 0 or instruction_index >= len(self._instructions):
