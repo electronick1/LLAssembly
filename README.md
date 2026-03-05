@@ -63,6 +63,7 @@ Anthropic and PydanticAI focusing on generating Python code to orchestrate tool 
 ⚠️ Work in progress! LLAssembly is under active development, some parts not tested well and could be unstable. Feedback and PRs are welcome. If you hit issues, please open a ticket.
 
 ## Use Cases
+![image](https://github.com/user-attachments/assets/60d1e7cd-fa74-40f9-b075-6d8c5c1a89ec)
 
 <details>
 	
