@@ -124,3 +124,53 @@ def test_weather_pydantic_prompt(ollama_test_model):
         messages[2].response_metadata["extern_call_ctx"].call_kwargs["loc"]["city"]
         == "paris"
     )
+
+
+@pytest.mark.vcr(**vcr_config_ollama())
+def test_weather_if_and_loops(ollama_test_model):
+    @tool
+    def get_ski_resort() -> str:
+        """
+        Gives a ski resort name to check weather
+        """
+        return "Courchevel"
+
+    @tool
+    def get_snow_coverage(resort: str) -> int:
+        """
+        Returns amount of snow for ski resort
+        """
+        return 10
+
+    @tool
+    def print_weather(resort: str, days_from_now: int):
+        """
+        Returns weather for the ski resort for `days_from_now` period of time
+        """
+        print(f"Weather for resort: {resort} is good enough")
+
+    agent = create_agent(
+        model=ollama_test_model,
+        tools=[print_weather, get_snow_coverage, get_ski_resort],
+        middleware=[ToolsPlannerMiddleware()],
+    )
+    result = agent.invoke(
+        {"messages": [HumanMessage("""
+                    Check the snow coverage at 5 ski resorts, and if
+                    you find one with snow, show the weather forecast
+                    for the upcoming week.
+                    """)]},
+    )
+    messages = result["messages"]
+    weather_tools_called = 0
+    snow_coverage_tools_called = 0
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            match msg.name:
+                case "print_weather":
+                    weather_tools_called += 1
+                case "get_snow_coverage":
+                    snow_coverage_tools_called += 1
+
+    assert snow_coverage_tools_called == 5
+    assert weather_tools_called == 5
