@@ -1,7 +1,7 @@
 
 ## 🔥 We Benchmarked Claude Against Itself — The Results Will Shock You
 
-> **TL;DR:** Claude's own tool-use agent needed **20× more LLM requests** for the same task. LLAssembly did it in **1 request**. With 19 tool calls and **29× fewer tokens**.
+> **TL;DR:** Claude's own tool-use agent needed **20× more LLM requests** and **5.3× more wall-clock time** for the same task. LLAssembly did it in **1 request** in **8.8 seconds**. Containers needed 46 seconds.
 
 We compared two approaches head-to-head on identical tasks (real benchmark, `claude-opus-4-5`):
 
@@ -10,6 +10,8 @@ We compared two approaches head-to-head on identical tasks (real benchmark, `cla
 | LLM requests (3-call task S1) | **1** | 4 |
 | LLM requests (19-call NPC task S4) | **1** | **20** |
 | Token cost (19-call NPC task S4) | **1,232 tokens** | **36,391 tokens** |
+| Wall-clock time (19-call NPC task S4) | **8.8s** | **46.3s** |
+| Wall-clock time (9-call loop task S3) | **6.9s** | **25.5s** |
 | Context window growth | **fixed** | grows with every round (up to 2,493 tokens for S4) |
 | Re-run same plan N times | **0 extra LLM calls** | N × K LLM calls |
 
@@ -52,15 +54,15 @@ pip install llassembly[benchmark]
 python benchmark/run_benchmark.py --approach both
 ```
 
-| Scenario | Description | LLAssembly reqs | Containers reqs | LLAssembly tokens | Containers tokens | Savings |
-|----------|-------------|-----------------|-----------------|-------------------|-------------------|---------|
-| S1 Sequential | 3 chained tool calls | **1** | 4 | **697** | 4,063 | 5.8× |
-| S2 Conditional | branch on tool result | **1** | 3 | **837** | 2,891 | 3.5× |
-| S3 Loop | iterate until snow found (9 calls) | **1** | **10** | **882** | 11,858 | **13.4×** |
-| S4 Complex | NPC movement loop + conditional (19 calls) | **1** | **20** | **1,232** | **36,391** | **29.5×** |
-| S5 Scale | 10 cities × 2 calls = 20 total | **1** | 3 | **1,539** | 5,911 | 3.8× |
-| S6 Re-execution | Same plan run 3× | **1 total** (0 extra) | 4 per run | **715** (run 1) | 4,067 per run | **∞** |
-| S7 Parallel | 20 calls, parallel execution | **1** | 3 | **1,731** | 5,950 | 3.4× |
+| Scenario | Description | LLAssembly reqs | Containers reqs | LLAssembly time | Containers time | LLAssembly tokens | Containers tokens | Token savings |
+|----------|-------------|-----------------|-----------------|-----------------|-----------------|-------------------|-------------------|---------------|
+| S1 Sequential | 3 chained tool calls | **1** | 4 | 8.3s | 9.5s | **697** | 4,063 | 5.8× |
+| S2 Conditional | branch on tool result | **1** | 3 | 5.6s | 6.6s | **837** | 2,891 | 3.5× |
+| S3 Loop | iterate until snow found (9 calls) | **1** | **10** | **6.9s** | **25.5s** | **882** | 11,858 | **13.4×** |
+| S4 Complex | NPC movement loop + conditional (19 calls) | **1** | **20** | **8.8s** | **46.3s** | **1,232** | **36,391** | **29.5×** |
+| S5 Scale | 10 cities × 2 calls = 20 total | **1** | 3 | 9.6s | 20.4s | **1,539** | 5,911 | 3.8× |
+| S6 Re-execution | Same plan run 3× | **1 total** (0 extra) | 4 per run | **0.0002s** (run 2+) | 11.6s per run | **715** (run 1) | 4,067 per run | **∞** |
+| S7 Parallel | 20 calls, parallel execution | **1** | 3 | 15.2s | 17.8s | **1,731** | 5,950 | 3.4× |
 
 > *Benchmark infrastructure: [`benchmark/run_benchmark.py`](benchmark/run_benchmark.py) and [`benchmark/scenarios.py`](benchmark/scenarios.py)*
 
