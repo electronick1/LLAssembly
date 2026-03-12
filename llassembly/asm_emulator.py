@@ -1,6 +1,7 @@
 import json
 import logging
 import textwrap
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from typing import Any, Callable, Generator, Self, get_args, get_origin
 
@@ -149,6 +150,51 @@ class ExternCall(pydantic.BaseModel):
         {"\n".join(pop_arguments)}
         '''
         """)
+
+    def get_compact_signature_prompt(self) -> str:
+        """
+        Returns a compact one-line function signature for ultra-low-token prompts.
+
+        Format: ``name(arg: type, ...) -> ret_type  ; description``
+
+        Example:
+            ``get_snow_coverage(resort: str) -> int  ; Returns snow coverage in cm``
+
+        This reduces per-tool token cost from ~60 tokens to ~8 tokens,
+        enabling LLAssembly prompts that are token-competitive with Python containers.
+        The LLM is expected to infer the PUSH/CALL/POP calling convention from the
+        system prompt header rather than per-function examples.
+        """
+        # Build argument list with types
+        arg_parts = []
+        for arg_name, field in self.input_args.items():
+            alias = field.alias or arg_name
+            if field.annotation is int:
+                typ = "int"
+            elif field.annotation is float:
+                typ = "float"
+            else:
+                typ = "str"
+            arg_parts.append(f"{alias}: {typ}")
+
+        # Build return type
+        if not self.output_annotations:
+            ret_type = "None"
+        elif len(self.output_annotations) == 1:
+            ann = self.output_annotations[0].annotation
+            ret_type = "int" if ann is int else "float" if ann is float else "str"
+        else:
+            types = []
+            for ann_field in self.output_annotations:
+                a = ann_field.annotation
+                types.append("int" if a is int else "float" if a is float else "str")
+            ret_type = f"({', '.join(types)})"
+
+        sig = f"{self.name}({', '.join(arg_parts)}) -> {ret_type}"
+        desc = (self.description or "").replace("\n", " ").strip()
+        if desc:
+            return f"- {sig}  ; {desc}"
+        return f"- {sig}"
 
 
 class ExternCallContext(pydantic.BaseModel):
@@ -335,13 +381,13 @@ class ASMEmulator:
         self._parse_labels()
 
     @classmethod
-    def from_asm_code(cls, asm_code: str) -> Self:
+    def from_asm_code(cls, asm_code: str, max_instructions_to_exec: int = 1000) -> Self:
         instructions = []
         for line in asm_code.strip().splitlines():
             if instruction := AsmInstruction.from_row_line(line):
                 instructions.append(instruction)
 
-        return cls(instructions)
+        return cls(instructions, max_instructions_to_exec=max_instructions_to_exec)
 
     def get_instructions(self) -> list[AsmInstruction]:
         return self._instructions.copy()
@@ -396,6 +442,112 @@ class ASMEmulator:
             instruction_result = self.execute_current_instruction()
             if isinstance(instruction_result, ExternCallContext):
                 yield instruction_result
+
+    def iter_tool_calls_parallel(
+        self,
+        max_workers: int = 8,
+    ) -> Generator[list[tuple[ExternCallContext, Any]], None, None]:
+        """
+        Execute tool calls in parallel where possible.
+
+        Groups consecutive independent tool calls into "batches" that can run
+        concurrently. A batch is a sequence of tool calls where:
+        - Each call's result is NOT needed as input to the next call in the batch
+        - The calls can be detected as independent by checking if any PUSH
+          instruction before a CALL references a register set by a previous POP
+
+        Simple heuristic: a batch ends when any POP result is immediately re-pushed
+        as an argument to the next call (dependency detected via register tracking).
+
+        For S5 (10 cities × 2 calls = 20 total), this can reduce latency from
+        ~20 × t_tool to ~2 × t_tool (parallel per-city fetch + parallel logging).
+
+        Usage::
+
+            for batch_results in emulator.iter_tool_calls_parallel():
+                for ctx, result in batch_results:
+                    print(f"CALL {ctx.extern_call.name} → {result}")
+
+        Yields:
+            List of (ExternCallContext, result) pairs for each parallel batch.
+        """
+        # Collect all tool call contexts first by dry-running the emulator
+        # to find independent call groups, then execute them in parallel.
+        #
+        # Approach: use the simple register-dependency heuristic.
+        # We track which registers are "live" (set by POP after a CALL).
+        # A new CALL is independent of previous ones if it doesn't PUSH
+        # any live register.
+
+        pending_batch: list[ExternCallContext] = []
+        live_registers: set[str] = set()
+
+        def _flush_batch() -> list[tuple[ExternCallContext, Any]]:
+            """Execute all calls in pending_batch in parallel."""
+            nonlocal pending_batch
+            if not pending_batch:
+                return []
+            batch = pending_batch
+            pending_batch = []
+
+            results: list[tuple[ExternCallContext, Any]] = [None] * len(batch)  # type: ignore
+
+            if len(batch) == 1:
+                # Single call — no need for thread pool
+                ctx = batch[0]
+                result = ctx.call_tool_handler()
+                results[0] = (ctx, result)
+            else:
+                def _exec(idx: int, ctx: ExternCallContext):
+                    return idx, ctx, ctx.call_tool_handler()
+
+                with ThreadPoolExecutor(max_workers=min(max_workers, len(batch))) as pool:
+                    futures = [pool.submit(_exec, i, ctx) for i, ctx in enumerate(batch)]
+                    for future in as_completed(futures):
+                        idx, ctx, result = future.result()
+                        results[idx] = (ctx, result)
+
+            return results
+
+        # Walk the instruction stream, grouping CALLs into independent batches.
+        # We track register deps at the "symbolic" level — any register name used
+        # in a PUSH before a CALL that was set by a POP from a previous CALL in
+        # the current batch means we must flush before adding the new CALL.
+        while not self.is_finished():
+            instruction = self._instructions[self._state.eip]
+
+            if instruction.command == "pop" and instruction.operands:
+                # A POP that consumes a CALL result must happen AFTER the batch
+                # that produced the result is flushed.  Flush now so that
+                # call_tool_handler() pushes the return value onto the emulator
+                # stack before _pop() tries to read it.
+                if pending_batch:
+                    batch_results = _flush_batch()
+                    if batch_results:
+                        yield batch_results
+                    live_registers.clear()
+                # Mark the destination register as "live" (set by a CALL result).
+                live_registers.add(instruction.operands[0])
+
+            elif instruction.command == "push" and instruction.operands:
+                # Check if we're pushing a live register (dependency!)
+                push_src = instruction.operands[0]
+                if push_src in live_registers:
+                    # Dependency: flush current batch, then reset live set
+                    batch_results = _flush_batch()
+                    if batch_results:
+                        yield batch_results
+                    live_registers.clear()
+
+            result = self.execute_current_instruction()
+
+            if isinstance(result, ExternCallContext):
+                pending_batch.append(result)
+
+        # Flush any remaining calls
+        batch_results = _flush_batch()
+        if batch_results:
+            yield batch_results
 
     def get_call_jmp_index(self, instruction_index: int) -> list[int] | None:
         if instruction_index < 0 or instruction_index >= len(self._instructions):

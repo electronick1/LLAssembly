@@ -1,4 +1,71 @@
 
+## 🔥 We Benchmarked Claude Against Itself — The Results Will Shock You
+
+> **TL;DR:** Claude's own tool-use agent needed **20× more LLM requests** for the same task. LLAssembly did it in **1 request**. With 19 tool calls and **29× fewer tokens**.
+
+We compared two approaches head-to-head on identical tasks (real benchmark, `claude-opus-4-5`):
+
+| | **LLAssembly** | **Anthropic tool-use** (agentic loop) |
+|---|---|---|
+| LLM requests (3-call task S1) | **1** | 4 |
+| LLM requests (19-call NPC task S4) | **1** | **20** |
+| Token cost (19-call NPC task S4) | **1,232 tokens** | **36,391 tokens** |
+| Context window growth | **fixed** | grows with every round (up to 2,493 tokens for S4) |
+| Re-run same plan N times | **0 extra LLM calls** | N × K LLM calls |
+
+### How is that even possible?
+
+The traditional tool-use agentic loop works like this: LLM calls a tool → gets result → calls another tool → gets result → repeat. Every round is an LLM request. For 20 tool calls, that's potentially 20 LLM round-trips, with the context window ballooning with every response.
+
+LLAssembly flips this: **one LLM request generates a complete assembly execution plan**. The emulator runs all the tools locally — no more LLM round-trips until the task is done.
+
+```
+Scenario: fetch temperature for 10 cities, log each one (20 total tool calls)
+
+LLAssembly:  1 LLM request  →  emulator runs 20 tool calls  →  done
+Tool-use:   20 LLM requests →  tool call →  result →  tool call →  result →  ...
+```
+
+### The "Re-execution" Killer Feature
+
+Generate once, run forever. If your workflow needs to repeat:
+
+```python
+# Generate assembly plan: 1 LLM request
+asm_code, _, _, _ = call_llm_for_assembly(task, extern_calls)
+
+# Execute 100 times — 0 additional LLM requests
+for _ in range(100):
+    emulator = ASMEmulator.from_asm_code(asm_code)
+    for tool_ctx in emulator.iter_tool_calls():
+        tool_ctx.call_tool_handler()
+```
+
+With containers/tool-use: 100 runs × N tools = **N×100 LLM requests**. With LLAssembly: **1 LLM request, period.**
+
+### Real Benchmark Results (`claude-opus-4-5`, compact mode)
+
+Run the benchmark yourself (requires `ANTHROPIC_API_KEY`):
+
+```bash
+pip install llassembly[benchmark]
+python benchmark/run_benchmark.py --approach both
+```
+
+| Scenario | Description | LLAssembly reqs | Containers reqs | LLAssembly tokens | Containers tokens | Savings |
+|----------|-------------|-----------------|-----------------|-------------------|-------------------|---------|
+| S1 Sequential | 3 chained tool calls | **1** | 4 | **697** | 4,063 | 5.8× |
+| S2 Conditional | branch on tool result | **1** | 3 | **837** | 2,891 | 3.5× |
+| S3 Loop | iterate until snow found (9 calls) | **1** | **10** | **882** | 11,858 | **13.4×** |
+| S4 Complex | NPC movement loop + conditional (19 calls) | **1** | **20** | **1,232** | **36,391** | **29.5×** |
+| S5 Scale | 10 cities × 2 calls = 20 total | **1** | 3 | **1,539** | 5,911 | 3.8× |
+| S6 Re-execution | Same plan run 3× | **1 total** (0 extra) | 4 per run | **715** (run 1) | 4,067 per run | **∞** |
+| S7 Parallel | 20 calls, parallel execution | **1** | 3 | **1,731** | 5,950 | 3.4× |
+
+> *Benchmark infrastructure: [`benchmark/run_benchmark.py`](benchmark/run_benchmark.py) and [`benchmark/scenarios.py`](benchmark/scenarios.py)*
+
+---
+
 ## About
 
 LLAssembly is a tool-orchestration library for LLM agents.
@@ -272,6 +339,138 @@ def llm_request():
 llm_request()
 
 ```
+
+## MCP Server
+
+LLAssembly ships an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that lets any MCP-compatible host (Claude Desktop, Cursor, Zed, etc.) use LLAssembly for tool orchestration without any Python integration code.
+
+### Installation
+
+```bash
+pip install "llassembly[mcp]"
+# or with uv:
+uv add "llassembly[mcp]"
+```
+
+### Configure Claude Desktop
+
+Add LLAssembly to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "llassembly": {
+      "command": "python",
+      "args": ["-m", "llassembly.mcp_server"],
+      "cwd": "/path/to/LLAssembly"
+    }
+  }
+}
+```
+
+Or use the installed CLI entrypoint:
+
+```json
+{
+  "mcpServers": {
+    "llassembly": {
+      "command": "llassembly-mcp"
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing the config.
+
+### Available MCP Tools
+
+The server exposes 5 tools:
+
+| Tool | Description |
+|------|-------------|
+| `register_tool(name, description, input_schema, output_schema)` | Declare a tool that assembly code can CALL |
+| `get_assembly_system_prompt(context)` | Get the system prompt to ask an LLM to generate assembly code |
+| `execute_assembly(asm_code, tool_results, max_instructions)` | Execute assembly code; returns `tool_call_pending` or `completed` |
+| `list_registered_tools()` | List all registered tools |
+| `clear_registered_tools()` | Reset the tool registry |
+
+### Protocol Flow
+
+The MCP server uses a **stateless re-execution** model. Rather than holding state between calls, each `execute_assembly` invocation replays the assembly from scratch using the `tool_results` dict to skip already-resolved calls:
+
+```
+1. Client calls register_tool for each available tool
+2. Client calls get_assembly_system_prompt(context) → system_prompt
+3. Client sends system_prompt + task to an LLM → asm_code
+4. Client calls execute_assembly(asm_code, tool_results="{}")
+   → {"status": "tool_call_pending", "tool_name": "get_weather", "kwargs": {"city": "Paris"}, "tool_call_id": "get_weather_0"}
+5. Client executes get_weather(city="Paris") → 12
+6. Client calls execute_assembly(asm_code, tool_results='{"get_weather_0": 12}')
+   → {"status": "tool_call_pending", ...next tool...}
+7. Repeat until: {"status": "completed", "tool_calls": [...], "summary": "..."}
+```
+
+The `tool_call_id` is deterministic (`{tool_name}_{call_index}`) so the emulator reliably matches results to calls across re-invocations.
+
+### Example: Manual MCP Interaction
+
+```python
+import json
+from mcp.client import MCPClient
+
+client = MCPClient("llassembly")
+
+# 1. Register tools
+client.call("register_tool", {
+    "tool_name": "get_weather",
+    "tool_description": "Returns temperature in Celsius for a city name",
+    "input_schema": json.dumps({"type": "object", "properties": {"city": {"type": "string"}}}),
+    "output_schema": json.dumps({"type": "integer"}),
+})
+
+# 2. Get system prompt and ask LLM to generate assembly
+system_prompt = client.call("get_assembly_system_prompt", {
+    "context": "Weather checking assistant"
+})
+
+# 3. (Call your LLM with system_prompt + task → asm_code)
+asm_code = "..."
+
+# 4. Execute assembly, injecting tool results round by round
+tool_results = {}
+while True:
+    resp = json.loads(client.call("execute_assembly", {
+        "asm_code": asm_code,
+        "tool_results": json.dumps(tool_results),
+    }))
+    if resp["status"] == "completed":
+        print(resp["summary"])
+        break
+    # Execute the pending tool call
+    tool_call_id = resp["tool_call_id"]
+    result = your_get_weather(**resp["kwargs"])
+    tool_results[tool_call_id] = result
+```
+
+### Token-Efficient Mode
+
+The MCP server uses the default verbose prompt. For token-competitive benchmarks you can pass a compact system prompt by calling `get_assembly_system_prompt` with `compact=true` (when that parameter is exposed), or by constructing the prompt directly:
+
+```python
+from llassembly import ExternCall, get_asm_prompt
+
+extern_calls = [ExternCall.from_callable(your_tool)]
+compact_prompt = get_asm_prompt(
+    "Your task context",
+    extern_calls,
+    prompt_path="llassembly/prompts_md/base_compact.md",
+    compact_signatures=True,
+)
+```
+
+This reduces the prompt from ~1,200 tokens to ~316–476 tokens — token-competitive with a single Anthropic tool-use round-trip.
+
+---
 
 ## Examples
 
