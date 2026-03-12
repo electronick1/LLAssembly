@@ -12,6 +12,7 @@ dependencies = [
     "langchain>=1.2.7",
     "langgraph>=1.0.8",
     "pydantic>=2.12.4",
+    "mcp[cli]>=1.0.0",
 ]
 
 [dependency-groups]
@@ -28,6 +29,15 @@ dev = [
     "mypy>=1.19.1",
     "isort>=7.0.0",
 ]
+
+[project.optional-dependencies]
+benchmark = [
+    "anthropic>=0.50.0",
+    "ollama>=0.6.1",
+]
+
+[project.scripts]
+llassembly-mcp = "llassembly.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/electronick1/LLAssembly"
